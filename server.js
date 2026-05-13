@@ -1,337 +1,165 @@
-const socket = io();
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const bcrypt = require("bcryptjs");
+const sqlite3 = require("sqlite3").verbose();
+const multer = require("multer");
+const fs = require("fs");
 
-let currentChat = "general";
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
 
-let stream;
-let peers = {};
-
-let muted = false;
-let deafened = false;
-
-let voiceState = {}; 
-// { id: { speaking: bool, level: 0-6 } }
-
-// ================= LOGIN =================
-let username = prompt("Username");
-let password = prompt("Password");
-
-socket.emit("login", {
-    u: username,
-    p: password
-});
-
-// ================= CHAT STORAGE =================
-let chats = JSON.parse(localStorage.getItem("txtelChats") || "{}");
-
-function saveChats() {
-    localStorage.setItem("txtelChats", JSON.stringify(chats));
+if (!fs.existsSync("./uploads")) {
+    fs.mkdirSync("./uploads");
 }
 
-function renderChat() {
+const db = new sqlite3.Database("./txtel.db");
 
-    messages.innerHTML = "";
+db.run(`
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE,
+    password TEXT
+)
+`);
 
-    if (!chats[currentChat]) {
-        chats[currentChat] = [];
+const storage = multer.diskStorage({
+    destination: "./uploads",
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + "-" + file.originalname);
     }
-
-    chats[currentChat].forEach(m => {
-
-        const div = document.createElement("div");
-        div.className = "msg";
-        div.innerHTML = m;
-        messages.appendChild(div);
-    });
-
-    messages.scrollTop = messages.scrollHeight;
-}
-
-// ================= USERS =================
-socket.on("users", (list) => {
-
-    users.innerHTML = "";
-
-    list.forEach(u => {
-
-        if (u === username) return;
-
-        const d = document.createElement("div");
-        d.className = "user";
-        d.innerText = u;
-
-        d.onclick = () => {
-
-            currentChat = u;
-            chatTitle.innerText = "@ " + u;
-
-            document.querySelectorAll(".channel,.user")
-                .forEach(x => x.classList.remove("active"));
-
-            d.classList.add("active");
-
-            renderChat();
-        };
-
-        users.appendChild(d);
-    });
 });
 
-// ================= GENERAL =================
-generalBtn.onclick = () => {
+const upload = multer({ storage });
 
-    currentChat = "general";
-    chatTitle.innerText = "# general";
+app.use("/uploads", express.static("uploads"));
 
-    document.querySelectorAll(".channel,.user")
-        .forEach(x => x.classList.remove("active"));
+const users = new Map();
+const bannedIPs = new Set();
 
-    generalBtn.classList.add("active");
-
-    renderChat();
+const voiceRooms = {
+    general: new Set()
 };
 
-// ================= RECEIVE MESSAGE =================
-socket.on("message", (m) => {
-
-    let room = "general";
-
-    if (m.to && (m.to === username || m.from === username)) {
-        room = m.from === username ? m.to : m.from;
-    }
-
-    if (!chats[room]) chats[room] = [];
-
-    let html = "";
-
-    if (m.text) {
-        html = "<b>" + m.from + ":</b> " + m.text;
-    }
-
-    if (m.file) {
-        html = "<b>" + m.from + ":</b> <a href='" + m.file + "' target='_blank'>File</a>";
-    }
-
-    chats[room].push(html);
-    saveChats();
-
-    if (room === currentChat) renderChat();
+app.get("/", (req, res) => {
+    res.send(`YOUR HTML HERE`);
 });
 
-// ================= SEND =================
-function send() {
-
-    if (!msg.value) return;
-
-    socket.emit("message", {
-        text: msg.value,
-        to: currentChat === "general" ? null : currentChat
+app.post("/upload", upload.single("file"), (req, res) => {
+    res.json({
+        url: "/uploads/" + req.file.filename
     });
-
-    msg.value = "";
-}
-
-document.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") send();
 });
 
-// ================= FILE =================
-async function uploadFile() {
+io.on("connection", (socket) => {
 
-    const f = file.files[0];
-    if (!f) return;
+    const ip = socket.handshake.address;
 
-    const form = new FormData();
-    form.append("file", f);
-
-    const res = await fetch("/upload", {
-        method: "POST",
-        body: form
-    });
-
-    const data = await res.json();
-
-    socket.emit("message", {
-        file: data.url,
-        to: currentChat === "general" ? null : currentChat
-    });
-}
-
-// ================= VOICE =================
-
-async function joinVoice() {
-
-    if (stream) return;
-
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-    socket.emit("joinVoice");
-
-    // speaking + level detection
-    const audioCtx = new AudioContext();
-    const source = audioCtx.createMediaStreamSource(stream);
-    const analyser = audioCtx.createAnalyser();
-
-    source.connect(analyser);
-
-    analyser.fftSize = 512;
-    const data = new Uint8Array(analyser.frequencyBinCount);
-
-    function detectSpeaking() {
-
-        analyser.getByteFrequencyData(data);
-
-        let volume = 0;
-
-        for (let i = 0; i < data.length; i++) {
-            volume += data[i];
-        }
-
-        volume = volume / data.length;
-
-        let level = Math.min(6, Math.floor(volume / 15));
-
-        socket.emit("voiceSpeaking", {
-            speaking: level > 0,
-            level
-        });
-
-        setTimeout(detectSpeaking, 200);
+    if (bannedIPs.has(ip)) {
+        return socket.disconnect();
     }
 
-    detectSpeaking();
-}
+    socket.on("login", ({ u, p }) => {
 
-// ================= VOICE USERS =================
-socket.on("voiceUsers", (usersList) => {
+        db.get(
+            "SELECT * FROM users WHERE username=?",
+            [u],
+            (err, row) => {
 
-    voiceList.innerHTML = "";
+                if (!row) {
 
-    usersList.forEach(id => {
+                    bcrypt.hash(p, 10, (err, hash) => {
 
-        if (!voiceState[id]) {
-            voiceState[id] = { speaking: false, level: 0 };
-        }
+                        db.run(
+                            "INSERT INTO users(username,password) VALUES(?,?)",
+                            [u, hash]
+                        );
+                    });
 
-        const data = voiceState[id];
+                    socket.username = u;
+                    users.set(socket.id, u);
 
-        const name =
-            (id === socket.id ? "You" : id)
-            .slice(0, 10);
+                    io.emit("users", Array.from(users.values()));
+                    return;
+                }
 
-        const div = document.createElement("div");
-        div.className = "voiceUser";
+                bcrypt.compare(p, row.password, (err, ok) => {
 
-        let bars = "";
+                    if (!ok) return;
 
-        for (let i = 1; i <= 6; i++) {
+                    socket.username = u;
+                    users.set(socket.id, u);
 
-            let color = "";
-
-            if (data.level >= i) {
-                if (data.level <= 2) color = "green";
-                else if (data.level <= 4) color = "orange";
-                else color = "red";
+                    io.emit("users", Array.from(users.values()));
+                });
             }
-
-            bars += `<div class="bar ${color ? "on " + color : ""}"></div>`;
-        }
-
-        div.innerHTML = `
-            <div class="voiceLeft">
-                <div class="mic ${data.speaking ? "speaking" : ""}"></div>
-                ${name}
-            </div>
-
-            <div class="levels">
-                ${bars}
-            </div>
-        `;
-
-        voiceList.appendChild(div);
-
-        if (id !== socket.id && stream && !peers[id]) {
-            createPeer(id, true);
-        }
-    });
-});
-
-// ================= VOICE SIGNAL =================
-socket.on("voiceSignal", (data) => {
-
-    if (!peers[data.from]) {
-        createPeer(data.from, false);
-    }
-
-    peers[data.from].signal(data.signal);
-});
-
-// ================= PEER =================
-function createPeer(id, initiator) {
-
-    const peer = new SimplePeer({
-        initiator,
-        trickle: false,
-        stream: stream || undefined
+        );
     });
 
-    peer.on("signal", (signal) => {
-        socket.emit("voiceSignal", {
-            to: id,
-            signal
+    socket.on("message", (data) => {
+
+        io.emit("message", {
+            from: socket.username,
+            text: data.text,
+            file: data.file,
+            to: data.to || null
         });
     });
 
-    peer.on("stream", (remoteStream) => {
+    socket.on("joinVoice", () => {
 
-        const audio = document.createElement("audio");
-        audio.srcObject = remoteStream;
-        audio.autoplay = true;
-        audio.muted = deafened;
+        const room = "general";
 
-        document.body.appendChild(audio);
+        if (!voiceRooms[room]) {
+            voiceRooms[room] = new Set();
+        }
+
+        voiceRooms[room].add(socket.id);
+        socket.join(room);
+
+        io.to(room).emit(
+            "voiceUsers",
+            Array.from(voiceRooms[room])
+        );
     });
 
-    peers[id] = peer;
-}
+    socket.on("voiceSpeaking", (data) => {
 
-// ================= SPEAKING UPDATE =================
-socket.on("voiceSpeakingUpdate", (data) => {
+        const room = "general";
 
-    voiceState[data.id] = {
-        speaking: data.speaking,
-        level: data.level || 0
-    };
+        io.to(room).emit("voiceSpeakingUpdate", {
+            id: socket.id,
+            speaking: data.speaking,
+            level: data.level || 0
+        });
+    });
 
-    socket.emit("voiceUsers", Object.keys(voiceState));
+    socket.on("voiceSignal", (data) => {
+
+        io.to(data.to).emit("voiceSignal", {
+            from: socket.id,
+            signal: data.signal
+        });
+    });
+
+    socket.on("disconnect", () => {
+
+        users.delete(socket.id);
+
+        for (const room in voiceRooms) {
+            voiceRooms[room].delete(socket.id);
+
+            io.to(room).emit(
+                "voiceUsers",
+                Array.from(voiceRooms[room])
+            );
+        }
+
+        io.emit("users", Array.from(users.values()));
+    });
 });
 
-// ================= MUTE =================
-function mute() {
-
-    muted = !muted;
-
-    if (stream) {
-        stream.getAudioTracks().forEach(t => {
-            t.enabled = !muted;
-        });
-    }
-
-    muteBtn.classList.toggle("red", muted);
-    muteBtn.innerText = muted ? "Unmute" : "Mute";
-}
-
-// ================= DEAFEN =================
-function deafen() {
-
-    deafened = !deafened;
-
-    document.querySelectorAll("audio").forEach(a => {
-        a.muted = deafened;
-    });
-
-    deafenBtn.classList.toggle("red", deafened);
-    deafenBtn.innerText = deafened ? "Undeafen" : "Deafen";
-}
-
-// ================= INIT =================
-renderChat();
+server.listen(process.env.PORT || 3000, () => {
+    console.log("TXTEL RUNNING");
+});
