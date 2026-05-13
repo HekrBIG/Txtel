@@ -26,17 +26,6 @@ CREATE TABLE IF NOT EXISTS users (
 )
 `);
 
-db.run(`
-CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    sender TEXT,
-    receiver TEXT,
-    text TEXT,
-    file TEXT,
-    time DATETIME DEFAULT CURRENT_TIMESTAMP
-)
-`);
-
 // ================= UPLOAD =================
 const storage = multer.diskStorage({
     destination: "./uploads",
@@ -53,9 +42,6 @@ app.use("/uploads", express.static("uploads"));
 const users = new Map();
 const bannedIPs = new Set();
 const voiceUsers = new Set();
-const messageHistory = [];
-
-const ADMIN_KEY = "Txtel223";
 
 // ================= FRONTEND =================
 app.get("/", (req, res) => {
@@ -89,18 +75,25 @@ body{
     overflow:auto;
 }
 
-.channel,.vc,.user{
+.channel,
+.vc,
+.user{
     padding:10px;
     margin:5px 0;
     border-radius:8px;
     cursor:pointer;
     background:#2b2d31;
+    transition:0.2s;
 }
 
 .channel:hover,
 .vc:hover,
 .user:hover{
     background:#3a3c41;
+}
+
+.active{
+    background:#5865f2 !important;
 }
 
 .vc{
@@ -112,6 +105,13 @@ body{
     flex:1;
     display:flex;
     flex-direction:column;
+}
+
+#chatTitle{
+    padding:15px;
+    background:#111214;
+    font-size:20px;
+    border-bottom:1px solid #333;
 }
 
 #messages{
@@ -152,34 +152,9 @@ button{
     cursor:pointer;
 }
 
-/* ADMIN CONSOLE */
-#adminConsole{
-    position:fixed;
-    bottom:0;
-    left:0;
-    width:100%;
-    height:250px;
-    background:black;
-    color:#0f0;
-    font-family:monospace;
-    display:none;
-    z-index:9999;
-    padding:10px;
-}
-
-#admincmd{
-    width:100%;
-    background:black;
-    color:#0f0;
-    border:none;
-    outline:none;
-    margin-top:10px;
-}
-
-#adminlog{
-    height:160px;
-    overflow:auto;
-    margin-top:10px;
+/* ACTIVE BUTTONS */
+.red{
+    background:red !important;
 }
 
 /* MOBILE */
@@ -206,9 +181,14 @@ button{
 
 <div id="sidebar">
 
-<div class="channel"># general</div>
+<div id="generalBtn"
+class="channel active">
+# general
+</div>
 
-<div class="vc" onclick="joinVoice()">
+<div id="voiceBtn"
+class="vc"
+onclick="joinVoice()">
 🔊 VC: General
 </div>
 
@@ -220,34 +200,38 @@ button{
 
 <div id="chat">
 
+<div id="chatTitle">
+# general
+</div>
+
 <div id="messages"></div>
 
 <div id="bar">
 
-<input id="msg" placeholder="Message">
+<input id="msg"
+placeholder="Message">
 
 <input type="file" id="file">
 
-<button onclick="send()">Send</button>
+<button onclick="send()">
+Send
+</button>
 
-<button onclick="uploadFile()">File</button>
+<button onclick="uploadFile()">
+File
+</button>
 
-<button onclick="mute()">Mute</button>
+<button id="muteBtn"
+onclick="mute()">
+Mute
+</button>
 
-<button onclick="deafen()">Deafen</button>
+<button id="deafenBtn"
+onclick="deafen()">
+Deafen
+</button>
 
 </div>
-
-</div>
-
-<!-- ADMIN -->
-<div id="adminConsole">
-
-<div>TXTEL ADMIN CONSOLE</div>
-
-<div id="adminlog"></div>
-
-<input id="admincmd" placeholder="command">
 
 </div>
 
@@ -258,7 +242,7 @@ button{
 
 const socket = io();
 
-let target = null;
+let currentChat = "general";
 
 let stream;
 let peers = {};
@@ -275,6 +259,45 @@ socket.emit("login",{
     p:password
 });
 
+// ================= CHAT STORAGE =================
+let chats =
+JSON.parse(
+localStorage.getItem("txtelChats")
+|| "{}"
+);
+
+function saveChats(){
+
+    localStorage.setItem(
+        "txtelChats",
+        JSON.stringify(chats)
+    );
+}
+
+function renderChat(){
+
+    messages.innerHTML = "";
+
+    if(!chats[currentChat]){
+        chats[currentChat] = [];
+    }
+
+    chats[currentChat].forEach(m=>{
+
+        const div =
+            document.createElement("div");
+
+        div.className = "msg";
+
+        div.innerHTML = m;
+
+        messages.appendChild(div);
+    });
+
+    messages.scrollTop =
+        messages.scrollHeight;
+}
+
 // ================= USERS =================
 socket.on("users",(list)=>{
 
@@ -282,72 +305,122 @@ socket.on("users",(list)=>{
 
     list.forEach(u=>{
 
-        const d = document.createElement("div");
+        if(u === username) return;
+
+        const d =
+            document.createElement("div");
 
         d.className = "user";
 
         d.innerText = u;
 
         d.onclick = ()=>{
-            target = u;
+
+            currentChat = u;
+
+            chatTitle.innerText =
+                "@ " + u;
+
+            document
+            .querySelectorAll(
+                ".channel,.user"
+            )
+            .forEach(x=>{
+
+                x.classList.remove("active");
+            });
+
+            d.classList.add("active");
+
+            renderChat();
         };
 
         users.appendChild(d);
     });
 });
 
-// ================= CHAT =================
+// ================= GENERAL =================
+generalBtn.onclick = ()=>{
+
+    currentChat = "general";
+
+    chatTitle.innerText =
+        "# general";
+
+    document
+    .querySelectorAll(
+        ".channel,.user"
+    )
+    .forEach(x=>{
+
+        x.classList.remove("active");
+    });
+
+    generalBtn.classList.add("active");
+
+    renderChat();
+};
+
+// ================= RECEIVE MESSAGE =================
 socket.on("message",(m)=>{
 
-    const div = document.createElement("div");
+    let room = "general";
 
-    div.className = "msg";
+    if(
+        m.to &&
+        (
+            m.to === username ||
+            m.from === username
+        )
+    ){
+        room =
+            m.from === username
+            ? m.to
+            : m.from;
+    }
 
-    div.id = "msg-" + m.id;
+    if(!chats[room]){
+        chats[room] = [];
+    }
+
+    let html = "";
 
     if(m.text){
-        div.innerHTML =
-            "<b>"+m.from+":</b> "+m.text;
+
+        html =
+        "<b>"+m.from+":</b> "+
+        m.text;
     }
 
     if(m.file){
-        div.innerHTML =
-            "<b>"+m.from+":</b> <a href='"+m.file+"' target='_blank'>Download File</a>";
+
+        html =
+        "<b>"+m.from+":</b> "+
+        "<a href='"+m.file+
+        "' target='_blank'>File</a>";
     }
 
-    messages.appendChild(div);
+    chats[room].push(html);
 
-    messages.scrollTop =
-        messages.scrollHeight;
-});
+    saveChats();
 
-// DELETE MESSAGE
-socket.on("deleteMessage",(id)=>{
+    if(room === currentChat){
 
-    const el =
-        document.getElementById("msg-" + id);
-
-    if(el){
-        el.remove();
+        renderChat();
     }
-});
-
-// CHAT LOG
-socket.on("chatlog",(m)=>{
-
-    adminlog.innerHTML +=
-        "<div>"+m+"</div>";
-
-    adminlog.scrollTop =
-        adminlog.scrollHeight;
 });
 
 // ================= SEND =================
 function send(){
 
+    if(!msg.value) return;
+
     socket.emit("message",{
         text:msg.value,
-        to:target
+        to:
+            currentChat === "general"
+            ? null
+            : currentChat
     });
 
     msg.value = "";
@@ -372,33 +445,43 @@ async function uploadFile(){
 
     form.append("file",f);
 
-    const res = await fetch("/upload",{
-        method:"POST",
-        body:form
-    });
+    const res =
+        await fetch("/upload",{
+            method:"POST",
+            body:form
+        });
 
-    const data = await res.json();
+    const data =
+        await res.json();
 
     socket.emit("message",{
-        file:data.url
+        file:data.url,
+        to:
+            currentChat === "general"
+            ? null
+            : currentChat
     });
 }
 
 // ================= VOICE =================
+
 async function joinVoice(){
 
+    if(stream) return;
+
     stream =
-        await navigator.mediaDevices.getUserMedia({
+        await navigator.mediaDevices
+        .getUserMedia({
             audio:true
         });
 
-    socket.emit("joinVoice","general");
+    socket.emit("joinVoice");
 }
 
-// users in voice
-socket.on("voiceUsers",(ids)=>{
+// users in vc
+socket.on("voiceUsers",(users)=>{
 
-    ids.forEach(id=>{
+    users.forEach(id=>{
 
         if(id === socket.id) return;
 
@@ -408,20 +491,29 @@ socket.on("voiceUsers",(ids)=>{
     });
 });
 
-// signals
+// incoming signal
 socket.on("voiceSignal",(data)=>{
 
     if(!peers[data.from]){
-        createPeer(data.from,false);
+
+        createPeer(
+            data.from,
+            false
+        );
     }
 
-    peers[data.from].signal(data.signal);
+    peers[data.from]
+    .signal(data.signal);
 });
 
 // create peer
-function createPeer(id,initiator){
+function createPeer(
+    id,
+    initiator
+){
 
-    const peer = new SimplePeer({
+    const peer =
+        new SimplePeer({
 
         initiator,
 
@@ -432,80 +524,104 @@ function createPeer(id,initiator){
 
     peer.on("signal",(signal)=>{
 
-        socket.emit("voiceSignal",{
-
-            room:"general",
-
-            signal
-        });
+        socket.emit(
+            "voiceSignal",
+            {
+                to:id,
+                signal
+            }
+        );
     });
 
-    peer.on("stream",(s)=>{
+    peer.on("stream",(remoteStream)=>{
 
         const audio =
-            document.createElement("audio");
+            document.createElement(
+                "audio"
+            );
 
-        audio.srcObject = s;
+        audio.srcObject =
+            remoteStream;
 
         audio.autoplay = true;
 
         audio.muted = deafened;
 
-        document.body.appendChild(audio);
+        document.body
+        .appendChild(audio);
     });
 
     peers[id] = peer;
 }
 
-// ================= AUDIO =================
+// ================= MUTE =================
 function mute(){
 
     muted = !muted;
 
     if(stream){
 
-        stream.getAudioTracks().forEach(t=>{
+        stream.getAudioTracks()
+        .forEach(t=>{
 
             t.enabled = !muted;
         });
     }
+
+    if(muted){
+
+        muteBtn.classList.add(
+            "red"
+        );
+
+        muteBtn.innerText =
+            "Unmute";
+
+    }else{
+
+        muteBtn.classList.remove(
+            "red"
+        );
+
+        muteBtn.innerText =
+            "Mute";
+    }
 }
 
+// ================= DEAFEN =================
 function deafen(){
 
     deafened = !deafened;
 
-    document.querySelectorAll("audio")
+    document
+    .querySelectorAll("audio")
     .forEach(a=>{
 
         a.muted = deafened;
     });
+
+    if(deafened){
+
+        deafenBtn.classList.add(
+            "red"
+        );
+
+        deafenBtn.innerText =
+            "Undeafen";
+
+    }else{
+
+        deafenBtn.classList.remove(
+            "red"
+        );
+
+        deafenBtn.innerText =
+            "Deafen";
+    }
 }
 
-// ================= ADMIN CONSOLE =================
-let adminOpen = false;
-
-// ;
-document.addEventListener("keydown",(e)=>{
-
-    if(e.key === ";"){
-
-        adminOpen = !adminOpen;
-
-        adminConsole.style.display =
-            adminOpen ? "block" : "none";
-    }
-});
-
-// commands
-admincmd.addEventListener("keydown",(e)=>{
-
-    if(e.key !== "Enter") return;
-
-    socket.emit("admin",admincmd.value);
-
-    admincmd.value = "";
-});
+// ================= START =================
+renderChat();
 
 </script>
 
@@ -515,12 +631,15 @@ admincmd.addEventListener("keydown",(e)=>{
 });
 
 // ================= FILE UPLOAD =================
-app.post("/upload",
+app.post(
+"/upload",
 upload.single("file"),
 (req,res)=>{
 
     res.json({
-        url:"/uploads/"+req.file.filename
+        url:
+        "/uploads/" +
+        req.file.filename
     });
 });
 
@@ -534,7 +653,7 @@ io.on("connection",(socket)=>{
         return socket.disconnect();
     }
 
-    // LOGIN / REGISTER
+    // LOGIN
     socket.on("login",({u,p})=>{
 
         db.get(
@@ -542,10 +661,13 @@ io.on("connection",(socket)=>{
             [u],
             (err,row)=>{
 
-            // register
+            // REGISTER
             if(!row){
 
-                bcrypt.hash(p,10,(err,hash)=>{
+                bcrypt.hash(
+                    p,
+                    10,
+                    (err,hash)=>{
 
                     db.run(
                         "INSERT INTO users(username,password) VALUES(?,?)",
@@ -555,17 +677,22 @@ io.on("connection",(socket)=>{
 
                 socket.username = u;
 
-                users.set(socket.id,u);
+                users.set(
+                    socket.id,
+                    u
+                );
 
                 io.emit(
                     "users",
-                    Array.from(users.values())
+                    Array.from(
+                        users.values()
+                    )
                 );
 
                 return;
             }
 
-            // login
+            // LOGIN
             bcrypt.compare(
                 p,
                 row.password,
@@ -575,47 +702,48 @@ io.on("connection",(socket)=>{
 
                 socket.username = u;
 
-                users.set(socket.id,u);
+                users.set(
+                    socket.id,
+                    u
+                );
 
                 io.emit(
                     "users",
-                    Array.from(users.values())
+                    Array.from(
+                        users.values()
+                    )
                 );
             });
         });
     });
 
-    // CHAT
+    // MESSAGE
     socket.on("message",(data)=>{
 
         const msgData = {
-            id: Date.now(),
-            from: socket.username,
-            text: data.text,
-            file: data.file
+
+            from:
+                socket.username,
+
+            text:
+                data.text,
+
+            file:
+                data.file,
+
+            to:
+                data.to || null
         };
 
-        messageHistory.push(msgData);
-
-        io.emit("message",msgData);
-
-        // live admin chat log
-        for(let [id,s] of io.sockets.sockets){
-
-            if(s.chatLogging){
-
-                s.emit(
-                    "chatlog",
-                    msgData.from +
-                    ": " +
-                    (msgData.text || "[FILE]")
-                );
-            }
-        }
+        io.emit(
+            "message",
+            msgData
+        );
     });
 
     // ================= VOICE =================
-    socket.on("joinVoice",(room)=>{
+
+    socket.on("joinVoice",()=>{
 
         voiceUsers.add(socket.id);
 
@@ -625,9 +753,11 @@ io.on("connection",(socket)=>{
         );
     });
 
-    socket.on("voiceSignal",(data)=>{
+    socket.on(
+    "voiceSignal",
+    (data)=>{
 
-        socket.broadcast.emit(
+        io.to(data.to).emit(
             "voiceSignal",
             {
                 from:socket.id,
@@ -636,71 +766,22 @@ io.on("connection",(socket)=>{
         );
     });
 
-    // ================= ADMIN =================
-    socket.on("admin",(cmd)=>{
-
-        const args = cmd.split(" ");
-
-        // enable chatlog
-        if(args[0] === "!chatlog"){
-
-            socket.chatLogging = true;
-        }
-
-        // delete messages
-        if(args[0] === "!delete"){
-
-            const index =
-                messageHistory.length -
-                parseInt(args[1]);
-
-            const msg =
-                messageHistory[index];
-
-            if(msg){
-
-                io.emit(
-                    "deleteMessage",
-                    msg.id
-                );
-            }
-        }
-
-        // ip ban
-        if(args[0] === "!ipban"){
-
-            bannedIPs.add(ip);
-
-            socket.disconnect();
-        }
-
-        // kick
-        if(args[0] === "!kick"){
-
-            const target = args[1];
-
-            for(let [id,u] of users){
-
-                if(u === target){
-
-                    io.sockets.sockets
-                    .get(id)
-                    ?.disconnect();
-                }
-            }
-        }
-    });
-
-    // disconnect
+    // DISCONNECT
     socket.on("disconnect",()=>{
 
-        users.delete(socket.id);
+        users.delete(
+            socket.id
+        );
 
-        voiceUsers.delete(socket.id);
+        voiceUsers.delete(
+            socket.id
+        );
 
         io.emit(
             "users",
-            Array.from(users.values())
+            Array.from(
+                users.values()
+            )
         );
     });
 });
@@ -710,5 +791,7 @@ server.listen(
 process.env.PORT || 3000,
 ()=>{
 
-    console.log("TXTEL RUNNING");
+    console.log(
+        "TXTEL RUNNING"
+    );
 });
