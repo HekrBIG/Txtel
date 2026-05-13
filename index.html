@@ -34,7 +34,7 @@ if(!username){
   localStorage.setItem("username",username)
 }
 
-const socket = io("http://localhost:3000")
+const socket = io("https://txtel.onrender.com")
 
 socket.emit("login",{username})
 
