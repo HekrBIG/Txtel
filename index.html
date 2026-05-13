@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Textel</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+<style>
+body{margin:0;background:#1e1f22;color:white;font-family:Arial}
+#chat{height:80vh;overflow:auto;padding:10px;white-space:pre-wrap}
+#users{background:#2b2d31;padding:10px}
+input{width:80%;padding:10px;background:#313338;color:white;border:none}
+button{padding:10px;background:#5865f2;color:white;border:none}
+</style>
+
+</head>
+
+<body>
+
+<div id="users"></div>
+<div id="chat"></div>
+
+<div style="padding:10px">
+<input id="msg">
+<button onclick="send()">SEND</button>
+</div>
+
+<script>
+
+let username = localStorage.getItem("username")
+
+if(!username){
+  username = prompt("Name")
+  localStorage.setItem("username",username)
+}
+
+const socket = io("https://txtel.onrender.com")
+
+socket.emit("login",{username})
+
+socket.on("chat_history", data=>{
+  document.getElementById("chat").innerText = data
+})
+
+socket.on("new_message", data=>{
+  const c = document.getElementById("chat")
+  c.innerText += `${data.username}: ${data.text}\n`
+})
+
+socket.on("online_users", users=>{
+  document.getElementById("users").innerHTML =
+  "<b>ONLINE</b><br>" +
+  users.map(u=>u.username).join("<br>")
+})
+
+function send(){
+  const i = document.getElementById("msg")
+  socket.emit("send_message",{text:i.value})
+  i.value=""
+}
+
+</script>
+
+</body>
+</html>
