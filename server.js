@@ -1,153 +1,314 @@
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const bcrypt = require("bcryptjs");
-const sqlite3 = require("sqlite3").verbose();
-const multer = require("multer");
-const fs = require("fs");
+const socket = io();
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+let username = prompt("Username");
+let password = prompt("Password");
 
-if (!fs.existsSync("./uploads")) {
-    fs.mkdirSync("./uploads");
+let currentChat = "general";
+
+let stream;
+let peers = {};
+let voiceState = {};
+
+let muted = false;
+let deafened = false;
+
+socket.emit("login", { u: username, p: password });
+
+let chats = JSON.parse(localStorage.getItem("txtelChats") || "{}");
+
+function saveChats() {
+    localStorage.setItem("txtelChats", JSON.stringify(chats));
 }
 
-const db = new sqlite3.Database("./txtel.db");
+function renderChat() {
 
-db.run(`
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE,
-    password TEXT
-)
-`);
+    messages.innerHTML = "";
 
-const storage = multer.diskStorage({
-    destination: "./uploads",
-    filename: (req, file, cb) => {
-        cb(null, Date.now() + "-" + file.originalname);
+    if (!chats[currentChat]) chats[currentChat] = [];
+
+    chats[currentChat].forEach(m => {
+        const div = document.createElement("div");
+        div.className = "msg";
+        div.innerHTML = m;
+        messages.appendChild(div);
+    });
+
+    messages.scrollTop = messages.scrollHeight;
+}
+
+socket.on("users", list => {
+
+    users.innerHTML = "";
+
+    list.forEach(u => {
+
+        if (u === username) return;
+
+        const d = document.createElement("div");
+        d.className = "user";
+        d.innerText = u;
+
+        d.onclick = () => {
+
+            currentChat = [username, u].sort().join("__");
+
+            chatTitle.innerText = "@ " + u;
+
+            document.querySelectorAll(".channel,.user")
+                .forEach(x => x.classList.remove("active"));
+
+            d.classList.add("active");
+
+            renderChat();
+        };
+
+        users.appendChild(d);
+    });
+});
+
+generalBtn.onclick = () => {
+
+    currentChat = "general";
+    chatTitle.innerText = "# general";
+
+    document.querySelectorAll(".channel,.user")
+        .forEach(x => x.classList.remove("active"));
+
+    generalBtn.classList.add("active");
+
+    renderChat();
+};
+
+socket.on("message", m => {
+
+    const room = m.room || "general";
+
+    if (!chats[room]) chats[room] = [];
+
+    let html = "";
+
+    if (m.text) html = `<b>${m.from}:</b> ${m.text}`;
+    if (m.file) html = `<b>${m.from}:</b> <a href="${m.file}" target="_blank">file</a>`;
+
+    chats[room].push(html);
+    saveChats();
+
+    if (room === currentChat) {
+        renderChat();
     }
 });
 
-const upload = multer({ storage });
+function send() {
 
-app.use("/uploads", express.static("uploads"));
+    if (!msg.value) return;
 
-const users = new Map();
-const bannedIPs = new Set();
+    socket.emit("message", {
+        text: msg.value,
+        to: currentChat === "general"
+            ? null
+            : currentChat.split("__").find(x => x !== username)
+    });
 
-const voiceRooms = {
-    general: new Set()
-};
-
-function chatKey(a, b) {
-    return [a, b].sort().join("__");
+    msg.value = "";
 }
 
-app.get("/", (req, res) => {
-    res.send("TXTEL RUNNING");
+document.addEventListener("keydown", e => {
+    if (e.key === "Enter") send();
 });
 
-app.post("/upload", upload.single("file"), (req, res) => {
-    res.json({ url: "/uploads/" + req.file.filename });
-});
+async function uploadFile() {
 
-io.on("connection", (socket) => {
+    const f = file.files[0];
+    if (!f) return;
 
-    const ip = socket.handshake.address;
-    if (bannedIPs.has(ip)) return socket.disconnect();
+    const form = new FormData();
+    form.append("file", f);
 
-    socket.on("login", ({ u, p }) => {
+    const res = await fetch("/upload", {
+        method: "POST",
+        body: form
+    });
 
-        db.get("SELECT * FROM users WHERE username=?", [u], (err, row) => {
+    const data = await res.json();
 
-            if (!row) {
+    socket.emit("message", {
+        file: data.url,
+        to: currentChat === "general"
+            ? null
+            : currentChat.split("__").find(x => x !== username)
+    });
+}
 
-                bcrypt.hash(p, 10, (err, hash) => {
-                    db.run("INSERT INTO users(username,password) VALUES(?,?)", [u, hash]);
-                });
+async function joinVoice() {
 
-                socket.username = u;
-                users.set(socket.id, u);
-                io.emit("users", Array.from(users.values()));
-                return;
+    if (stream) return;
+
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    socket.emit("joinVoice");
+
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioContext();
+
+    await ctx.resume();
+
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+
+    source.connect(analyser);
+
+    analyser.fftSize = 512;
+
+    const data = new Uint8Array(analyser.frequencyBinCount);
+
+    function loop() {
+
+        analyser.getByteFrequencyData(data);
+
+        let v = 0;
+
+        for (let i = 0; i < data.length; i++) {
+            v += data[i];
+        }
+
+        v = v / data.length;
+
+        let level = 0;
+
+        if (v > 5) level = 1;
+        if (v > 10) level = 2;
+        if (v > 20) level = 3;
+        if (v > 35) level = 4;
+        if (v > 55) level = 5;
+        if (v > 75) level = 6;
+
+        socket.emit("voiceSpeaking", {
+            speaking: level > 0,
+            level
+        });
+
+        setTimeout(loop, 200);
+    }
+
+    loop();
+}
+
+socket.on("voiceUsers", list => {
+
+    voiceList.innerHTML = "";
+
+    list.forEach(id => {
+
+        if (!voiceState[id]) {
+            voiceState[id] = { speaking: false, level: 0 };
+        }
+
+        const d = voiceState[id];
+
+        const name = (id === socket.id ? "You" : id).slice(0, 10);
+
+        let div = document.createElement("div");
+        div.className = "voiceUser";
+
+        let bars = "";
+
+        for (let i = 1; i <= 6; i++) {
+
+            let c = "";
+
+            if (d.level >= i) {
+                if (d.level <= 2) c = "green";
+                else if (d.level <= 4) c = "orange";
+                else c = "red";
             }
 
-            bcrypt.compare(p, row.password, (err, ok) => {
-                if (!ok) return;
-
-                socket.username = u;
-                users.set(socket.id, u);
-
-                io.emit("users", Array.from(users.values()));
-            });
-        });
-    });
-
-    socket.on("message", (data) => {
-
-        let room = "general";
-
-        if (data.to) {
-            room = chatKey(socket.username, data.to);
+            bars += `<div class="bar ${d.level >= i ? "on " + c : ""}"></div>`;
         }
 
-        io.emit("message", {
-            from: socket.username,
-            text: data.text,
-            file: data.file,
-            room,
-            to: data.to || null
-        });
-    });
+        div.innerHTML =
+            `<div class="voiceLeft">
+                <div class="mic ${d.speaking ? "speaking" : ""}"></div>
+                ${name}
+            </div>
+            <div class="levels">${bars}</div>`;
 
-    socket.on("joinVoice", () => {
+        voiceList.appendChild(div);
 
-        const room = "general";
-
-        voiceRooms[room].add(socket.id);
-        socket.join(room);
-
-        io.to(room).emit(
-            "voiceUsers",
-            Array.from(voiceRooms[room])
-        );
-    });
-
-    socket.on("voiceSpeaking", (data) => {
-        io.to("general").emit("voiceSpeakingUpdate", {
-            id: socket.id,
-            speaking: data.speaking,
-            level: data.level
-        });
-    });
-
-    socket.on("voiceSignal", (data) => {
-        io.to(data.to).emit("voiceSignal", {
-            from: socket.id,
-            signal: data.signal
-        });
-    });
-
-    socket.on("disconnect", () => {
-
-        users.delete(socket.id);
-
-        for (const r in voiceRooms) {
-            voiceRooms[r].delete(socket.id);
-
-            io.to(r).emit(
-                "voiceUsers",
-                Array.from(voiceRooms[r])
-            );
+        if (id !== socket.id && stream && !peers[id]) {
+            createPeer(id, true);
         }
-
-        io.emit("users", Array.from(users.values()));
     });
 });
 
-server.listen(process.env.PORT || 3000, () => {
-    console.log("TXTEL RUNNING");
+socket.on("voiceSignal", d => {
+
+    if (!peers[d.from]) {
+        createPeer(d.from, false);
+    }
+
+    peers[d.from].signal(d.signal);
 });
+
+function createPeer(id, initiator) {
+
+    const peer = new SimplePeer({
+        initiator,
+        trickle: false,
+        stream
+    });
+
+    peer.on("signal", sig => {
+        socket.emit("voiceSignal", {
+            to: id,
+            signal: sig
+        });
+    });
+
+    peer.on("stream", s => {
+
+        const audio = document.createElement("audio");
+        audio.srcObject = s;
+        audio.autoplay = true;
+        audio.muted = deafened;
+
+        document.body.appendChild(audio);
+    });
+
+    peers[id] = peer;
+}
+
+socket.on("voiceSpeakingUpdate", d => {
+
+    if (!voiceState[d.id]) {
+        voiceState[d.id] = { speaking: false, level: 0 };
+    }
+
+    voiceState[d.id].speaking = d.speaking;
+    voiceState[d.id].level = d.level;
+});
+
+function mute() {
+
+    muted = !muted;
+
+    if (stream) {
+        stream.getAudioTracks().forEach(t => t.enabled = !muted);
+    }
+
+    muteBtn.classList.toggle("red", muted);
+    muteBtn.innerText = muted ? "Unmute" : "Mute";
+}
+
+function deafen() {
+
+    deafened = !deafened;
+
+    document.querySelectorAll("audio").forEach(a => {
+        a.muted = deafened;
+    });
+
+    deafenBtn.classList.toggle("red", deafened);
+    deafenBtn.innerText = deafened ? "Undeafen" : "Deafen";
+}
+
+renderChat();
