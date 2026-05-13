@@ -1,314 +1,284 @@
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const bcrypt = require("bcryptjs");
+const sqlite3 = require("sqlite3").verbose();
+const multer = require("multer");
+const fs = require("fs");
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
+if (!fs.existsSync("./uploads")) fs.mkdirSync("./uploads");
+
+const db = new sqlite3.Database("./txtel.db");
+
+db.run(`
+CREATE TABLE IF NOT EXISTS users (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+username TEXT UNIQUE,
+password TEXT
+)
+`);
+
+const upload = multer({
+    storage: multer.diskStorage({
+        destination: "./uploads",
+        filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname)
+    })
+});
+
+app.use("/uploads", express.static("uploads"));
+
+const users = new Map();
+const voiceUsers = new Set();
+
+function dmKey(a, b) {
+    return [a, b].sort().join("__");
+}
+
+/* ================= FRONTEND ================= */
+app.get("/", (req, res) => {
+
+res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>TXTEL</title>
+<style>
+body{margin:0;font-family:Arial;background:#1e1f22;color:white;display:flex;height:100vh}
+#sidebar{width:220px;background:#111;padding:10px;overflow:auto}
+#chat{flex:1;display:flex;flex-direction:column}
+#messages{flex:1;overflow:auto;padding:10px}
+.msg{background:#2b2d31;margin:5px;padding:6px;border-radius:6px}
+.user{padding:6px;background:#2b2d31;margin:4px;cursor:pointer}
+.vc{padding:6px;background:#1f3f2a;margin:4px;cursor:pointer}
+#bar{display:flex}
+input{flex:1;padding:8px}
+button{padding:8px}
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+<div id="generalBtn" class="vc"># general voice</div>
+<hr>
+<div id="users"></div>
+</div>
+
+<div id="chat">
+<div id="messages"></div>
+<div id="bar">
+<input id="msg">
+<button onclick="send()">Send</button>
+</div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://unpkg.com/simple-peer/simplepeer.min.js"></script>
+
+<script>
 const socket = io();
 
-let username = prompt("Username");
-let password = prompt("Password");
+let username = prompt("username");
+let password = prompt("password");
 
 let currentChat = "general";
+let chats = JSON.parse(localStorage.getItem("txtel")||"{}");
 
 let stream;
 let peers = {};
-let voiceState = {};
 
-let muted = false;
-let deafened = false;
+socket.emit("login",{u:username,p:password});
 
-socket.emit("login", { u: username, p: password });
-
-let chats = JSON.parse(localStorage.getItem("txtelChats") || "{}");
-
-function saveChats() {
-    localStorage.setItem("txtelChats", JSON.stringify(chats));
-}
-
-function renderChat() {
-
-    messages.innerHTML = "";
-
-    if (!chats[currentChat]) chats[currentChat] = [];
-
-    chats[currentChat].forEach(m => {
-        const div = document.createElement("div");
-        div.className = "msg";
-        div.innerHTML = m;
-        messages.appendChild(div);
-    });
-
-    messages.scrollTop = messages.scrollHeight;
-}
-
-socket.on("users", list => {
-
-    users.innerHTML = "";
-
-    list.forEach(u => {
-
-        if (u === username) return;
-
-        const d = document.createElement("div");
-        d.className = "user";
-        d.innerText = u;
-
-        d.onclick = () => {
-
-            currentChat = [username, u].sort().join("__");
-
-            chatTitle.innerText = "@ " + u;
-
-            document.querySelectorAll(".channel,.user")
-                .forEach(x => x.classList.remove("active"));
-
-            d.classList.add("active");
-
-            renderChat();
-        };
-
-        users.appendChild(d);
-    });
+function render(){
+messages.innerHTML="";
+if(!chats[currentChat]) chats[currentChat]=[];
+chats[currentChat].forEach(m=>{
+let d=document.createElement("div");
+d.className="msg";
+d.innerHTML=m;
+messages.appendChild(d);
 });
+}
 
-generalBtn.onclick = () => {
+socket.on("users",list=>{
+users.innerHTML="";
+list.forEach(u=>{
+if(u===username)return;
+let d=document.createElement("div");
+d.className="user";
+d.innerText=u;
 
-    currentChat = "general";
-    chatTitle.innerText = "# general";
-
-    document.querySelectorAll(".channel,.user")
-        .forEach(x => x.classList.remove("active"));
-
-    generalBtn.classList.add("active");
-
-    renderChat();
+d.onclick=()=>{
+currentChat=[username,u].sort().join("__");
+render();
 };
 
-socket.on("message", m => {
-
-    const room = m.room || "general";
-
-    if (!chats[room]) chats[room] = [];
-
-    let html = "";
-
-    if (m.text) html = `<b>${m.from}:</b> ${m.text}`;
-    if (m.file) html = `<b>${m.from}:</b> <a href="${m.file}" target="_blank">file</a>`;
-
-    chats[room].push(html);
-    saveChats();
-
-    if (room === currentChat) {
-        renderChat();
-    }
+users.appendChild(d);
+});
 });
 
-function send() {
+generalBtn.onclick=()=>{
+currentChat="general";
+render();
+};
 
-    if (!msg.value) return;
-
-    socket.emit("message", {
-        text: msg.value,
-        to: currentChat === "general"
-            ? null
-            : currentChat.split("__").find(x => x !== username)
-    });
-
-    msg.value = "";
-}
-
-document.addEventListener("keydown", e => {
-    if (e.key === "Enter") send();
+socket.on("message",m=>{
+let room=m.room;
+if(!chats[room]) chats[room]=[];
+let html="";
+if(m.text) html="<b>"+m.from+":</b> "+m.text;
+chats[room].push(html);
+localStorage.setItem("txtel",JSON.stringify(chats));
+if(room===currentChat) render();
 });
 
-async function uploadFile() {
+function send(){
+if(!msg.value)return;
 
-    const f = file.files[0];
-    if (!f) return;
-
-    const form = new FormData();
-    form.append("file", f);
-
-    const res = await fetch("/upload", {
-        method: "POST",
-        body: form
-    });
-
-    const data = await res.json();
-
-    socket.emit("message", {
-        file: data.url,
-        to: currentChat === "general"
-            ? null
-            : currentChat.split("__").find(x => x !== username)
-    });
-}
-
-async function joinVoice() {
-
-    if (stream) return;
-
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-    socket.emit("joinVoice");
-
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    const ctx = new AudioContext();
-
-    await ctx.resume();
-
-    const source = ctx.createMediaStreamSource(stream);
-    const analyser = ctx.createAnalyser();
-
-    source.connect(analyser);
-
-    analyser.fftSize = 512;
-
-    const data = new Uint8Array(analyser.frequencyBinCount);
-
-    function loop() {
-
-        analyser.getByteFrequencyData(data);
-
-        let v = 0;
-
-        for (let i = 0; i < data.length; i++) {
-            v += data[i];
-        }
-
-        v = v / data.length;
-
-        let level = 0;
-
-        if (v > 5) level = 1;
-        if (v > 10) level = 2;
-        if (v > 20) level = 3;
-        if (v > 35) level = 4;
-        if (v > 55) level = 5;
-        if (v > 75) level = 6;
-
-        socket.emit("voiceSpeaking", {
-            speaking: level > 0,
-            level
-        });
-
-        setTimeout(loop, 200);
-    }
-
-    loop();
-}
-
-socket.on("voiceUsers", list => {
-
-    voiceList.innerHTML = "";
-
-    list.forEach(id => {
-
-        if (!voiceState[id]) {
-            voiceState[id] = { speaking: false, level: 0 };
-        }
-
-        const d = voiceState[id];
-
-        const name = (id === socket.id ? "You" : id).slice(0, 10);
-
-        let div = document.createElement("div");
-        div.className = "voiceUser";
-
-        let bars = "";
-
-        for (let i = 1; i <= 6; i++) {
-
-            let c = "";
-
-            if (d.level >= i) {
-                if (d.level <= 2) c = "green";
-                else if (d.level <= 4) c = "orange";
-                else c = "red";
-            }
-
-            bars += `<div class="bar ${d.level >= i ? "on " + c : ""}"></div>`;
-        }
-
-        div.innerHTML =
-            `<div class="voiceLeft">
-                <div class="mic ${d.speaking ? "speaking" : ""}"></div>
-                ${name}
-            </div>
-            <div class="levels">${bars}</div>`;
-
-        voiceList.appendChild(div);
-
-        if (id !== socket.id && stream && !peers[id]) {
-            createPeer(id, true);
-        }
-    });
+socket.emit("message",{
+text:msg.value,
+to:currentChat==="general"?null:currentChat.split("__").find(x=>x!==username)
 });
 
-socket.on("voiceSignal", d => {
+msg.value="";
+}
 
-    if (!peers[d.from]) {
-        createPeer(d.from, false);
-    }
-
-    peers[d.from].signal(d.signal);
+document.addEventListener("keydown",e=>{
+if(e.key==="Enter")send();
 });
 
-function createPeer(id, initiator) {
+/* ================= VOICE ================= */
 
-    const peer = new SimplePeer({
-        initiator,
-        trickle: false,
-        stream
-    });
+async function joinVoice(){
 
-    peer.on("signal", sig => {
-        socket.emit("voiceSignal", {
-            to: id,
-            signal: sig
-        });
-    });
+stream = await navigator.mediaDevices.getUserMedia({audio:true});
+socket.emit("joinVoice");
 
-    peer.on("stream", s => {
+const ctx = new AudioContext();
+const src = ctx.createMediaStreamSource(stream);
+const analyser = ctx.createAnalyser();
 
-        const audio = document.createElement("audio");
-        audio.srcObject = s;
-        audio.autoplay = true;
-        audio.muted = deafened;
+src.connect(analyser);
+analyser.fftSize = 512;
 
-        document.body.appendChild(audio);
-    });
+const data = new Uint8Array(analyser.frequencyBinCount);
 
-    peers[id] = peer;
+function loop(){
+analyser.getByteFrequencyData(data);
+
+let v=0;
+for(let i=0;i<data.length;i++)v+=data[i];
+v/=data.length;
+
+let level=0;
+if(v>5)level=1;
+if(v>15)level=2;
+if(v>30)level=3;
+if(v>50)level=4;
+if(v>70)level=5;
+
+socket.emit("voiceSpeaking",{speaking:level>0,level});
+setTimeout(loop,200);
 }
 
-socket.on("voiceSpeakingUpdate", d => {
+loop();
+}
 
-    if (!voiceState[d.id]) {
-        voiceState[d.id] = { speaking: false, level: 0 };
-    }
-
-    voiceState[d.id].speaking = d.speaking;
-    voiceState[d.id].level = d.level;
+socket.on("voiceUsers",list=>{
+console.log("voice:",list);
 });
 
-function mute() {
+socket.on("voiceSignal",d=>{
+if(!peers[d.from])createPeer(d.from,false);
+peers[d.from].signal(d.signal);
+});
 
-    muted = !muted;
+function createPeer(id,initiator){
 
-    if (stream) {
-        stream.getAudioTracks().forEach(t => t.enabled = !muted);
-    }
+const peer=new SimplePeer({
+initiator,
+trickle:false,
+stream
+});
 
-    muteBtn.classList.toggle("red", muted);
-    muteBtn.innerText = muted ? "Unmute" : "Mute";
+peer.on("signal",sig=>{
+socket.emit("voiceSignal",{to:id,signal:sig});
+});
+
+peer.on("stream",s=>{
+const a=document.createElement("audio");
+a.srcObject=s;
+a.autoplay=true;
+document.body.appendChild(a);
+});
+
+peers[id]=peer;
 }
 
-function deafen() {
+</script>
 
-    deafened = !deafened;
+</body>
+</html>
+`);
+});
 
-    document.querySelectorAll("audio").forEach(a => {
-        a.muted = deafened;
-    });
+/* ================= UPLOAD ================= */
+app.post("/upload", upload.single("file"), (req,res)=>{
+res.json({url:"/uploads/"+req.file.filename});
+});
 
-    deafenBtn.classList.toggle("red", deafened);
-    deafenBtn.innerText = deafened ? "Undeafen" : "Deafen";
+/* ================= SOCKET ================= */
+io.on("connection",(socket)=>{
+
+socket.on("login",({u,p})=>{
+
+db.get("SELECT * FROM users WHERE username=?",[u],(e,r)=>{
+
+if(!r){
+db.run("INSERT INTO users(username,password) VALUES(?,?)",[u,p]);
+socket.username=u;
+users.set(socket.id,u);
+io.emit("users",[...users.values()]);
+return;
 }
 
-renderChat();
+socket.username=u;
+users.set(socket.id,u);
+io.emit("users",[...users.values()]);
+});
+});
+
+socket.on("message",(d)=>{
+
+let room=d.to?dmKey(socket.username,d.to):"general";
+
+io.emit("message",{
+from:socket.username,
+text:d.text,
+room
+});
+});
+
+socket.on("joinVoice",()=>{
+voiceUsers.add(socket.id);
+io.emit("voiceUsers",[...voiceUsers]);
+});
+
+socket.on("voiceSignal",(d)=>{
+io.to(d.to).emit("voiceSignal",{from:socket.id,signal:d.signal});
+});
+
+socket.on("disconnect",()=>{
+users.delete(socket.id);
+voiceUsers.delete(socket.id);
+io.emit("users",[...users.values()]);
+});
+});
+
+server.listen(process.env.PORT||3000,()=>{
+console.log("TXTEL RUNNING");
+});
