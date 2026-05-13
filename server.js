@@ -249,9 +249,9 @@ if(d.level<=2)c="green";
 else if(d.level<=4)c="orange";
 else c="red";
 }
-bars+=`<div class="bar ${c?"on "+c:""}"></div>`;
+bars+= "<div class='bar " + (c ? "on " + c : "") + "'></div>";
 }
-div.innerHTML=`<div class="voiceLeft"><div class="mic ${d.speaking?"speaking":""}"></div>${name}</div><div class="levels">${bars}</div>`;
+div.innerHTML="<div class='voiceLeft'><div class='mic "+(d.speaking?"speaking":"")+"'></div>"+name+"</div><div class='levels'>"+bars+"</div>";
 voiceList.appendChild(div);
 if(id!==socket.id&&stream&&!peers[id])createPeer(id,true);
 });
