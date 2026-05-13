@@ -1,14 +1,24 @@
 const socket = io();
 
+let username;
+let password;
+
 let currentChat = "general";
+
 let stream;
 let peers = {};
+
 let muted = false;
 let deafened = false;
+
 let voiceState = {};
 
-let username = prompt("Username");
-let password = prompt("Password");
+function chatKey(a, b) {
+    return [a, b].sort().join("__");
+}
+
+username = prompt("Username");
+password = prompt("Password");
 
 socket.emit("login", { u: username, p: password });
 
@@ -18,7 +28,13 @@ function saveChats() {
     localStorage.setItem("txtelChats", JSON.stringify(chats));
 }
 
+function getRoom(to) {
+    if (!to || to === "general") return "general";
+    return chatKey(username, to);
+}
+
 function renderChat() {
+
     messages.innerHTML = "";
 
     if (!chats[currentChat]) {
@@ -36,9 +52,11 @@ function renderChat() {
 }
 
 socket.on("users", list => {
+
     users.innerHTML = "";
 
     list.forEach(u => {
+
         if (u === username) return;
 
         const d = document.createElement("div");
@@ -46,10 +64,13 @@ socket.on("users", list => {
         d.innerText = u;
 
         d.onclick = () => {
-            currentChat = u;
+
+            currentChat = getRoom(u);
+
             chatTitle.innerText = "@ " + u;
 
-            document.querySelectorAll(".channel,.user").forEach(x => x.classList.remove("active"));
+            document.querySelectorAll(".channel,.user")
+                .forEach(x => x.classList.remove("active"));
 
             d.classList.add("active");
 
@@ -61,10 +82,12 @@ socket.on("users", list => {
 });
 
 generalBtn.onclick = () => {
+
     currentChat = "general";
     chatTitle.innerText = "# general";
 
-    document.querySelectorAll(".channel,.user").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".channel,.user")
+        .forEach(x => x.classList.remove("active"));
 
     generalBtn.classList.add("active");
 
@@ -72,32 +95,37 @@ generalBtn.onclick = () => {
 };
 
 socket.on("message", m => {
-    let room = "general";
 
-    if (m.to && (m.to === username || m.from === username)) {
-        room = m.from === username ? m.to : m.from;
-    }
+    let room = m.room || "general";
 
     if (!chats[room]) chats[room] = [];
 
     let html = "";
 
-    if (m.text) html = "<b>" + m.from + ":</b> " + m.text;
-    if (m.file) html = "<b>" + m.from + ":</b> <a href='" + m.file + "' target='_blank'>File</a>";
+    if (m.text) {
+        html = "<b>" + m.from + ":</b> " + m.text;
+    }
+
+    if (m.file) {
+        html = "<b>" + m.from + ":</b> <a href='" + m.file + "' target='_blank'>file</a>";
+    }
 
     chats[room].push(html);
 
     saveChats();
 
-    if (room === currentChat) renderChat();
+    if (room === currentChat) {
+        renderChat();
+    }
 });
 
 function send() {
+
     if (!msg.value) return;
 
     socket.emit("message", {
         text: msg.value,
-        to: currentChat === "general" ? null : currentChat
+        to: currentChat === "general" ? null : currentChat.split("__").find(x => x !== username)
     });
 
     msg.value = "";
@@ -108,6 +136,7 @@ document.addEventListener("keydown", e => {
 });
 
 async function uploadFile() {
+
     const f = file.files[0];
     if (!f) return;
 
@@ -123,11 +152,12 @@ async function uploadFile() {
 
     socket.emit("message", {
         file: data.url,
-        to: currentChat === "general" ? null : currentChat
+        to: currentChat === "general" ? null : currentChat.split("__").find(x => x !== username)
     });
 }
 
 async function joinVoice() {
+
     if (stream) return;
 
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -141,9 +171,11 @@ async function joinVoice() {
     source.connect(analyser);
 
     analyser.fftSize = 512;
+
     const data = new Uint8Array(analyser.frequencyBinCount);
 
     function loop() {
+
         analyser.getByteFrequencyData(data);
 
         let v = 0;
@@ -175,9 +207,11 @@ async function joinVoice() {
 }
 
 socket.on("voiceUsers", list => {
+
     voiceList.innerHTML = "";
 
     list.forEach(id => {
+
         if (!voiceState[id]) {
             voiceState[id] = { speaking: false, level: 0 };
         }
@@ -192,6 +226,7 @@ socket.on("voiceUsers", list => {
         let bars = "";
 
         for (let i = 1; i <= 6; i++) {
+
             let c = "";
 
             if (d.level >= i) {
@@ -219,6 +254,7 @@ socket.on("voiceUsers", list => {
 });
 
 socket.on("voiceSignal", d => {
+
     if (!peers[d.from]) {
         createPeer(d.from, false);
     }
@@ -227,6 +263,7 @@ socket.on("voiceSignal", d => {
 });
 
 function createPeer(id, initiator) {
+
     const peer = new SimplePeer({
         initiator,
         trickle: false,
@@ -241,10 +278,12 @@ function createPeer(id, initiator) {
     });
 
     peer.on("stream", s => {
+
         const a = document.createElement("audio");
         a.srcObject = s;
         a.autoplay = true;
         a.muted = deafened;
+
         document.body.appendChild(a);
     });
 
@@ -252,6 +291,7 @@ function createPeer(id, initiator) {
 }
 
 socket.on("voiceSpeakingUpdate", d => {
+
     if (!voiceState[d.id]) {
         voiceState[d.id] = { speaking: false, level: 0 };
     }
@@ -261,6 +301,7 @@ socket.on("voiceSpeakingUpdate", d => {
 });
 
 function mute() {
+
     muted = !muted;
 
     if (stream) {
@@ -272,6 +313,7 @@ function mute() {
 }
 
 function deafen() {
+
     deafened = !deafened;
 
     document.querySelectorAll("audio").forEach(a => a.muted = deafened);
