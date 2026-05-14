@@ -9,48 +9,36 @@ const io=new Server(server);
 
 const db=new sqlite3.Database("txtel.db");
 
-// STATE
 const users=new Map();
 const vcUsers=new Map();
 
-// DB
+/* DB */
 db.run("CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY,room TEXT,fromUser TEXT,text TEXT,time DATETIME DEFAULT CURRENT_TIMESTAMP)");
 db.run("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,username TEXT UNIQUE)");
 
+/* ================= FRONTEND ================= */
 app.get("/",(req,res)=>{
-res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>TXTEL</title>
+res.send(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>TXTEL</title>
 <style>
 body{margin:0;font-family:Arial;background:#1e1f22;color:#fff;display:flex;height:100vh}
-
-/* SIDEBAR */
 #sidebar{width:260px;background:#111;padding:10px;overflow:auto}
 .section{margin-bottom:10px}
 .title{font-weight:bold;margin:10px 0}
 .item{padding:6px;background:#2b2d31;margin:4px;border-radius:6px;cursor:pointer}
 .item.active{background:#4aa3ff}
 .badge{background:red;border-radius:999px;padding:2px 6px;font-size:12px;float:right}
-
-/* CHAT */
 #chat{flex:1;display:flex;flex-direction:column}
 #top{padding:10px;background:#111}
 #messages{flex:1;overflow:auto;padding:10px}
 .msg{background:#2b2d31;margin:5px;padding:6px;border-radius:6px}
-
-/* INPUT BAR */
 #bar{display:flex;gap:6px;padding:10px;background:#111}
 input{flex:1;padding:8px;border:none;border-radius:6px;background:#2b2d31;color:#fff}
-button{padding:8px;border:none;border-radius:6px;background:#5865f2;color:#fff;cursor:pointer}
-
-/* VC PANEL */
-#vcPanel .vcUser{
-padding:6px;
-margin:4px;
-background:#2b2d31;
-border-radius:6px;
-font-size:13px;
-display:flex;
-justify-content:space-between;
-}
+button{padding:8px;border:none;border-radius:6px;background:#5865f2;color:#fff}
+.vcUser{padding:6px;margin:4px;background:#2b2d31;border-radius:6px;font-size:13px}
 .small{font-size:10px;opacity:0.7}
 </style>
 </head>
@@ -68,8 +56,8 @@ justify-content:space-between;
 <div class="section">
 <div class="title">Voice</div>
 <div id="voiceChannels"></div>
-<button onclick="addVC()">+ VC</button>
 <div id="vcPanel"></div>
+<button onclick="addVC()">+ VC</button>
 </div>
 
 <div class="section">
@@ -117,13 +105,13 @@ let peers={};
 let chatsList=["general"];
 let vcList=["General VC"];
 
-/* SEND MESSAGE */
+/* SEND */
 function send(){
 socket.emit("msg",{room,text:i.value});
 i.value="";
 }
 
-/* RECEIVE MESSAGE */
+/* RECEIVE */
 socket.on("msg",d=>{
 if(!chats[d.room])chats[d.room]=[];
 chats[d.room].push(d);
@@ -136,7 +124,7 @@ renderChats();
 if(d.room===room)render();
 });
 
-/* RENDER CHAT */
+/* CHAT RENDER */
 function render(){
 messages.innerHTML="";
 (chats[room]||[]).forEach(x=>{
@@ -177,7 +165,7 @@ users.appendChild(d);
 });
 });
 
-/* VC UI */
+/* VC */
 function renderVC(){
 voiceChannels.innerHTML="";
 vcList.forEach(v=>{
@@ -205,7 +193,7 @@ startSpeak();
 });
 }
 
-/* VOICE USERS (DISCORD STYLE) */
+/* VC UPDATE */
 socket.on("vcUpdate",list=>{
 vcPanel.innerHTML="";
 
@@ -217,16 +205,15 @@ let mic=u.mute?"🔇":"🎤";
 let deaf=u.deaf?"🎧":"";
 let speak=u.speaking?"📶":"";
 
-div.innerHTML=`
-<span>${mic} ${deaf} ${u.name}</span>
-<span class="small">${speak}</span>
-`;
+div.innerHTML =
+"<span>"+mic+" "+deaf+" "+u.name+"</span>"+
+"<span class='small'>"+speak+"</span>";
 
 vcPanel.appendChild(div);
 });
 });
 
-/* SPEAKING DETECTION */
+/* SPEAK DETECT */
 function startSpeak(){
 const ctx=new AudioContext();
 const src=ctx.createMediaStreamSource(stream);
@@ -273,7 +260,7 @@ renderVC();
 </body></html>`);
 });
 
-/* SOCKET */
+/* ================= SOCKET ================= */
 io.on("connection",socket=>{
 
 socket.on("login",u=>{
@@ -282,7 +269,6 @@ users.set(socket.id,u);
 io.emit("users",Array.from(users.values()));
 });
 
-/* CHAT */
 socket.on("msg",d=>{
 io.emit("msg",{from:socket.user,room:d.room,text:d.text});
 });
@@ -290,7 +276,6 @@ io.emit("msg",{from:socket.user,room:d.room,text:d.text});
 /* VC JOIN */
 socket.on("joinVoice",()=>{
 vcUsers.set(socket.id,{
-id:socket.id,
 name:socket.user,
 mute:false,
 deaf:false,
@@ -299,7 +284,7 @@ speaking:false
 io.emit("vcUpdate",Array.from(vcUsers.values()));
 });
 
-/* VC STATE */
+/* VC STATES */
 socket.on("vcMute",v=>{
 if(vcUsers.has(socket.id)){
 vcUsers.get(socket.id).mute=v;
