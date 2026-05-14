@@ -1,277 +1,202 @@
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const bcrypt = require("bcryptjs");
-const sqlite3 = require("sqlite3").verbose();
-const multer = require("multer");
-const fs = require("fs");
+const express=require("express");
+const http=require("http");
+const {Server}=require("socket.io");
+const bcrypt=require("bcryptjs");
+const sqlite3=require("sqlite3").verbose();
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+const app=express();
+const server=http.createServer(app);
+const io=new Server(server);
 
-if (!fs.existsSync("./uploads")) fs.mkdirSync("./uploads");
+const db=new sqlite3.Database("txtel.db");
 
-const db = new sqlite3.Database("./txtel.db");
+const users=new Map();
+const voiceUsers=new Map();
 
-db.run(`
-CREATE TABLE IF NOT EXISTS users (
+db.run(`CREATE TABLE IF NOT EXISTS users (
 id INTEGER PRIMARY KEY AUTOINCREMENT,
 username TEXT UNIQUE,
 password TEXT
-)
-`);
+)`);
 
-const upload = multer({
-    storage: multer.diskStorage({
-        destination: "./uploads",
-        filename: (req, file, cb) =>
-            cb(null, Date.now() + "-" + file.originalname)
-    })
-});
-
-app.use("/uploads", express.static("uploads"));
-
-const users = new Map();
-const voiceRooms = new Map();
-const admins = new Set();
-
-function dmKey(a, b) {
-    return [a, b].sort().join("__");
-}
-
-/* ================= FRONTEND ================= */
-app.get("/", (req, res) => {
-
-res.send(`
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>DISCORD CLONE</title>
+app.get("/",(req,res)=>{
+res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>TXTEL</title>
 <style>
 body{margin:0;font-family:Arial;background:#1e1f22;color:white;display:flex;height:100vh}
-#sidebar{width:240px;background:#111;padding:10px;overflow:auto}
+#sidebar{width:240px;background:#111;padding:10px}
 #chat{flex:1;display:flex;flex-direction:column}
 #messages{flex:1;overflow:auto;padding:10px}
-.msg{background:#2b2d31;margin:5px;padding:6px;border-radius:6px}
-.user{padding:6px;background:#2b2d31;margin:4px;cursor:pointer;display:flex;justify-content:space-between}
-
-.mic{width:10px;height:10px;border-radius:50%;background:#555}
-.mic.speaking{background:#00bfff}
-
-.bar{width:4px;height:10px;background:#333;margin:1px;display:inline-block}
-.bar.on.green{background:green}
-.bar.on.orange{background:orange}
-.bar.on.red{background:red}
-
-#adminMenu{
-position:fixed;
-display:none;
-background:#222;
-padding:10px;
-border:1px solid #444;
-}
-</style>
-</head>
-<body>
+.msg{background:#2b2d31;margin:5px;padding:8px;border-radius:8px}
+.user,.voice{padding:10px;background:#2b2d31;margin:5px 0;border-radius:8px;cursor:pointer}
+#bar{display:flex;padding:10px;background:#111;gap:10px}
+input,button{padding:10px;border:none;border-radius:8px}
+input{flex:1;background:#2b2d31;color:white}
+button{background:#5865f2;color:white}
+.badge{background:red;border-radius:999px;padding:2px 8px;font-size:12px;float:right}
+</style></head><body>
 
 <div id="sidebar">
-<div onclick="setRoom('general')"># general</div>
+<div class="voice" id="voiceBtn">🔊 Voice General</div>
+<div id="voiceUsers"></div>
 <hr>
 <div id="users"></div>
 </div>
 
 <div id="chat">
 <div id="messages"></div>
-<input id="msg"><button onclick="send()">Send</button>
+<div id="bar">
+<input id="msg">
+<button onclick="send()">Send</button>
 </div>
-
-<div id="adminMenu">
-<button onclick="kick()">Kick</button>
-<button onclick="ban()">Ban</button>
-<button onclick="rename()">Rename</button>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="https://unpkg.com/simple-peer/simplepeer.min.js"></script>
-
 <script>
 const socket=io();
 
-let username=prompt("username");
-let currentRoom="general";
-let selected=null;
-let admin=false;
-let peers={};
+let username=prompt("Username");
+let password=prompt("Password");
 
-socket.emit("login",{u:username});
+socket.emit("login",{u:username,p:password});
 
-/* ADMIN MODE */
-document.addEventListener("keydown",e=>{
-if(e.key===";") admin=true;
+let currentChat="general";
+let unread={};
+let chats=JSON.parse(localStorage.getItem("txtelChats")||"{}");
+
+function save(){localStorage.setItem("txtelChats",JSON.stringify(chats));}
+
+function render(){
+messages.innerHTML="";
+if(!chats[currentChat]) chats[currentChat]=[];
+chats[currentChat].forEach(m=>{
+let d=document.createElement("div");
+d.className="msg";
+d.innerHTML=m;
+messages.appendChild(d);
 });
-
-/* RIGHT CLICK */
-document.addEventListener("contextmenu",e=>{
-e.preventDefault();
-if(admin && selected){
-adminMenu.style.display="block";
-adminMenu.style.left=e.pageX+"px";
-adminMenu.style.top=e.pageY+"px";
 }
-});
-document.addEventListener("click",()=>adminMenu.style.display="none");
 
-/* USERS */
 socket.on("users",list=>{
 users.innerHTML="";
 list.forEach(u=>{
 if(u===username)return;
-
 let d=document.createElement("div");
 d.className="user";
-
-let mic=document.createElement("div");
-mic.className="mic";
-
-let bars=document.createElement("div");
-for(let i=0;i<6;i++){
-let b=document.createElement("div");
-b.className="bar";
-bars.appendChild(b);
-}
-
-d.innerText=u;
-d.appendChild(mic);
-d.appendChild(bars);
-
+let b=unread[u]?"<span class='badge'>"+unread[u]+"</span>":"";
+d.innerHTML=u+b;
 d.onclick=()=>{
-selected=u;
-currentRoom=[username,u].sort().join("__");
+currentChat=u;
+unread[u]=0;
 render();
+socket.emit("refreshUsers");
 };
-
 users.appendChild(d);
 });
 });
 
-/* CHAT */
-function render(){messages.innerHTML="";}
-
 socket.on("message",m=>{
-let d=document.createElement("div");
-d.className="msg";
-d.innerHTML="<b>"+m.from+":</b> "+m.text;
-messages.appendChild(d);
+let room="general";
+if(m.to&&(m.to===username||m.from===username)){
+room=m.from===username?m.to:m.from;
+}
+if(!chats[room]) chats[room]=[];
+chats[room].push("<b>"+m.from+":</b> "+m.text);
+save();
+
+if(room!==currentChat&&room!=="general"){
+unread[room]=(unread[room]||0)+1;
+socket.emit("refreshUsers");
+}
+
+if(room===currentChat) render();
 });
 
-/* SEND */
 function send(){
-socket.emit("message",{text:msg.value,to:currentRoom==="general"?null:currentRoom.split("__").find(x=>x!==username)});
+if(!msg.value)return;
+socket.emit("message",{
+text:msg.value,
+to:currentChat==="general"?null:currentChat
+});
 msg.value="";
 }
 
-/* ROOMS */
-function setRoom(r){currentRoom=r;render();}
+msg.addEventListener("keydown",e=>{
+if(e.key==="Enter") send();
+});
 
-/* VOICE */
-async function joinVoice(){
+let localStream;
 
-let stream=await navigator.mediaDevices.getUserMedia({audio:true});
+voiceBtn.onclick=async()=>{
+if(localStream)return;
+localStream=await navigator.mediaDevices.getUserMedia({audio:true});
 socket.emit("joinVoice");
+};
 
-const ctx=new AudioContext();
-const src=ctx.createMediaStreamSource(stream);
-const ana=ctx.createAnalyser();
-src.connect(ana);
-
-ana.fftSize=256;
-let data=new Uint8Array(ana.frequencyBinCount);
-
-function loop(){
-ana.getByteFrequencyData(data);
-
-let v=0;
-for(let i=0;i<data.length;i++)v+=data[i];
-v/=data.length;
-
-let level=v>70?3:v>40?2:v>10?1:0;
-
-socket.emit("voiceLevel",{level});
-setTimeout(loop,150);
-}
-loop();
-}
-
-socket.on("voiceUpdate",d=>{
-document.querySelectorAll(".user").forEach(el=>{
-if(el.innerText.includes(d.name)){
-let mic=el.querySelector(".mic");
-if(mic) mic.classList.toggle("speaking",d.level>0);
-}
+socket.on("voiceUsers",list=>{
+voiceUsers.innerHTML="";
+list.forEach(v=>{
+let d=document.createElement("div");
+d.className="user";
+d.innerHTML=v.name+(v.speaking?" 🎤":"");
+voiceUsers.appendChild(d);
 });
 });
 
-/* ADMIN */
-function kick(){socket.emit("admin",{type:"kick",target:selected});}
-function ban(){socket.emit("admin",{type:"ban",target:selected});}
-function rename(){socket.emit("admin",{type:"rename",target:selected,newName:prompt("name")});}
-
-</script>
-
-</body>
-</html>
-`);
+</script></body></html>`);
 });
 
-/* FILES */
-app.post("/upload",upload.single("file"),(req,res)=>{
-res.json({url:"/uploads/"+req.file.filename});
-});
-
-/* SOCKET */
 io.on("connection",socket=>{
 
-socket.on("login",d=>{
-socket.username=d.u;
-users.set(socket.id,d.u);
-io.emit("users",[...users.values()]);
+socket.on("refreshUsers",()=>{
+io.emit("users",Array.from(users.values()));
 });
 
-/* CHAT */
-socket.on("message",d=>{
-io.emit("message",{from:socket.username,text:d.text});
+socket.on("login",({u,p})=>{
+db.get("SELECT * FROM users WHERE username=?",[u],(e,row)=>{
+if(!row){
+bcrypt.hash(p,10,(e,h)=>{
+db.run("INSERT INTO users(username,password) VALUES(?,?)",[u,h]);
 });
-
-/* VOICE */
-socket.on("voiceLevel",d=>{
-io.emit("voiceUpdate",{name:socket.username,level:d.level});
-});
-
-/* ADMIN */
-socket.on("admin",d=>{
-if(!admins.has(socket.id)) return;
-
-for(let [id,name] of users){
-if(name===d.target){
-
-if(d.type==="kick") io.sockets.sockets.get(id)?.disconnect();
-if(d.type==="ban") users.delete(id);
-if(d.type==="rename") users.set(id,d.newName);
-
-}
+socket.username=u;
+users.set(socket.id,u);
+io.emit("users",Array.from(users.values()));
+return;
 }
 
-io.emit("users",[...users.values()]);
+bcrypt.compare(p,row.password,(e,ok)=>{
+if(!ok)return;
+socket.username=u;
+users.set(socket.id,u);
+io.emit("users",Array.from(users.values()));
+});
+});
+});
+
+socket.on("message",data=>{
+io.emit("message",{
+from:socket.username,
+text:data.text,
+to:data.to||null
+});
+});
+
+socket.on("joinVoice",()=>{
+voiceUsers.set(socket.id,{
+name:socket.username,
+speaking:false
+});
+io.emit("voiceUsers",Array.from(voiceUsers.values()));
 });
 
 socket.on("disconnect",()=>{
 users.delete(socket.id);
-io.emit("users",[...users.values()]);
+voiceUsers.delete(socket.id);
+io.emit("users",Array.from(users.values()));
+io.emit("voiceUsers",Array.from(voiceUsers.values()));
 });
+
 });
 
 server.listen(process.env.PORT||3000,()=>{
-console.log("DISCORD CLONE RUNNING");
+console.log("TXTEL RUNNING");
 });
