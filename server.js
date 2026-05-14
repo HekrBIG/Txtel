@@ -12,7 +12,10 @@ let chats=["general"];
 let vcs=["General VC"];
 
 let messages={};
-let unread={}; // 🔵 NOTIF BADGES (count per channel)
+let unread={};
+
+let vcUsers={}; 
+// { room: Set(usernames) }
 
 const users=new Map();
 
@@ -47,6 +50,7 @@ border-right:1px solid #222;
 overflow:auto;
 }
 
+.section{margin-bottom:15px;}
 .title{font-size:12px;opacity:0.6;margin-bottom:6px;}
 
 .item{
@@ -59,25 +63,28 @@ position:relative;
 }
 
 .item:hover{background:#313338;}
+.active{background:#4aa3ff !important;}
 
-.active{
-background:#4aa3ff !important;
-}
-
-/* 🔵 UNREAD BADGE */
+/* UNREAD BADGE */
 .badge{
 position:absolute;
 right:8px;
 top:8px;
 background:#5865f2;
-color:white;
-border-radius:50%;
 width:18px;
 height:18px;
-font-size:12px;
+border-radius:50%;
 display:flex;
 align-items:center;
 justify-content:center;
+font-size:12px;
+}
+
+/* VC USERS */
+.small{
+font-size:11px;
+opacity:0.7;
+margin-top:3px;
 }
 
 /* CHAT */
@@ -91,8 +98,6 @@ flex-direction:column;
 padding:12px;
 background:#111214;
 border-bottom:1px solid #222;
-display:flex;
-justify-content:space-between;
 }
 
 #messages{
@@ -140,13 +145,17 @@ cursor:pointer;
 
 <div id="sidebar">
 
+<div class="section">
 <div class="title">TEXT CHANNELS</div>
 <div id="channels"></div>
 <button onclick="createChat()">+ Chat</button>
+</div>
 
-<div class="title" style="margin-top:15px;">VOICE CHANNELS</div>
+<div class="section">
+<div class="title">VOICE CHANNELS</div>
 <div id="voice"></div>
 <button onclick="createVC()">+ VC</button>
+</div>
 
 </div>
 
@@ -154,7 +163,6 @@ cursor:pointer;
 
 <div id="top">
 <div id="room"># general</div>
-<button onclick="rename()">Rename</button>
 </div>
 
 <div id="messages"></div>
@@ -198,15 +206,6 @@ socket.emit("msg",{to:current,text:t});
 msg.value="";
 }
 
-/* RENAME USER */
-function rename(){
-let n=prompt("New name:");
-if(n){
-user=n;
-socket.emit("rename",n);
-}
-}
-
 /* CREATE CHAT */
 function createChat(){
 let n=prompt("Chat name");
@@ -219,16 +218,18 @@ let n=prompt("VC name");
 if(n) socket.emit("createVC",n);
 }
 
-/* CHANNELS */
+/* CHAT LIST */
 socket.on("chatList",list=>{
-render(list);
+renderChats(list);
 });
 
-function render(list){
+/* RENDER CHANNELS */
+function renderChats(list){
 
 channels.innerHTML="";
 
 list.forEach(c=>{
+
 let d=document.createElement("div");
 d.className="item";
 
@@ -239,7 +240,7 @@ unread[c]=0;
 
 d.innerText="# "+c;
 
-/* 🔵 BADGE */
+/* UNREAD BADGE */
 if(unread[c] && c!==current){
 let b=document.createElement("div");
 b.className="badge";
@@ -251,7 +252,7 @@ d.onclick=()=>{
 current=c;
 room.innerText="# "+c;
 unread[c]=0;
-render(list);
+renderChats(list);
 load();
 };
 
@@ -265,16 +266,16 @@ socket.on("msg",m=>{
 if(!store[m.to]) store[m.to]=[];
 store[m.to].push(m);
 
-/* unread counter */
+/* unread system */
 if(m.to!==current){
 unread[m.to]=(unread[m.to]||0)+1;
 }
 
 if(m.to===current) load();
-renderedListLast=listCache;
+renderChats(Object.keys(store));
 });
 
-/* LOAD */
+/* LOAD CHAT */
 function load(){
 messages.innerHTML="";
 
@@ -283,24 +284,32 @@ let list=store[current]||[];
 list.forEach(m=>{
 let d=document.createElement("div");
 d.className="msg";
-
 d.innerHTML="<b>"+m.from+"</b>: "+m.text;
-
 messages.appendChild(d);
 });
 }
 
 /* VC LIST */
-socket.on("vcList",list=>{
+socket.on("vcList",data=>{
+
 voice.innerHTML="";
 
-list.forEach(v=>{
+data.vcs.forEach(v=>{
+
 let d=document.createElement("div");
 d.className="item";
-d.innerText="🔊 "+v;
-d.onclick=()=>alert("VC join: "+v);
+
+let users=data.users[v]||[];
+
+d.innerHTML=
+"🔊 "+v+
+"<div class='small'>"+users.join(", ")+"</div>";
+
+d.onclick=()=>alert("Join VC: "+v);
+
 voice.appendChild(d);
 });
+
 });
 
 </script>
@@ -319,25 +328,22 @@ socket.user=u;
 users.set(socket.id,u);
 
 socket.emit("chatList",chats);
-socket.emit("vcList",vcs);
+socket.emit("vcList",{vcs,users:vcUsers});
 });
 
-/* RENAME */
-socket.on("rename",n=>{
-socket.user=n;
-users.set(socket.id,n);
-});
-
-/* CHAT */
+/* CHAT CREATE */
 socket.on("createChat",n=>{
 if(!chats.includes(n)) chats.push(n);
 io.emit("chatList",chats);
 });
 
-/* VC */
+/* VC CREATE */
 socket.on("createVC",n=>{
 if(!vcs.includes(n)) vcs.push(n);
-io.emit("vcList",vcs);
+
+vcUsers[n]=vcUsers[n]||new Set();
+
+io.emit("vcList",{vcs,users:vcUsersToObj()});
 });
 
 /* MESSAGE */
@@ -352,8 +358,36 @@ text:d.text
 io.emit("msg",m);
 });
 
+/* VC JOIN (no message spam, ONLY tracking) */
+socket.on("joinVC",room=>{
+
+for(let r in vcUsers){
+vcUsers[r].delete(socket.user);
+}
+
+if(!vcUsers[room]) vcUsers[room]=new Set();
+
+vcUsers[room].add(socket.user);
+
+io.emit("vcList",{vcs,users:vcUsersToObj()});
+});
+
+/* HELPERS */
+function vcUsersToObj(){
+let o={};
+for(let k in vcUsers){
+o[k]=Array.from(vcUsers[k]);
+}
+return o;
+}
+
+/* CLEAN */
+socket.on("disconnect",()=>{
+users.delete(socket.id);
+});
+
 });
 
 server.listen(3000,()=>{
-console.log("TXTEL FINAL CLEAN RUNNING");
+console.log("TXTEL FINAL STABLE RUNNING");
 });
