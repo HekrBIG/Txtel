@@ -12,11 +12,9 @@ cors:{origin:"*"}
 /* ================= STATE ================= */
 
 const users=new Map();
-
 const vcUsers=new Map();
 
 let globalVCs=["General VC"];
-
 let globalChats=["general"];
 
 /* ================= FRONTEND ================= */
@@ -41,8 +39,6 @@ height:100vh;
 overflow:hidden;
 }
 
-/* SIDEBAR */
-
 #sidebar{
 width:300px;
 background:#0f1012;
@@ -62,8 +58,6 @@ margin-bottom:10px;
 font-size:14px;
 opacity:0.8;
 }
-
-/* ITEMS */
 
 .item{
 background:#232428;
@@ -90,8 +84,6 @@ border-radius:999px;
 font-size:11px;
 float:right;
 }
-
-/* CHAT */
 
 #chat{
 flex:1;
@@ -120,8 +112,6 @@ margin:5px 0;
 word-break:break-word;
 }
 
-/* BAR */
-
 #bar{
 display:flex;
 gap:6px;
@@ -148,8 +138,6 @@ color:white;
 cursor:pointer;
 font-weight:bold;
 }
-
-/* VC */
 
 .vcUser{
 background:#232428;
@@ -259,24 +247,20 @@ socket.emit("login",username);
 /* ================= STATE ================= */
 
 let currentRoom="general";
-
 let currentVC=null;
 
 let chats={};
-
 let unread={};
 
 let textChannels=[];
-
-let voiceChannels=[];
+let vcList=[];
 
 let localStream=null;
 
-let peers={};
-
 let muted=false;
-
 let deafened=false;
+
+let peers={};
 
 /* ================= NOTIFICATIONS ================= */
 
@@ -301,7 +285,7 @@ text:text
 msgInput.value="";
 }
 
-/* ENTER SEND */
+/* ================= ENTER SEND ================= */
 
 msgInput.addEventListener("keydown",e=>{
 
@@ -342,7 +326,7 @@ renderMessages();
 }
 });
 
-/* ================= RENDER MESSAGES ================= */
+/* ================= RENDER MSG ================= */
 
 function renderMessages(){
 
@@ -362,7 +346,7 @@ messages.appendChild(div);
 messages.scrollTop=messages.scrollHeight;
 }
 
-/* ================= TEXT CHANNELS ================= */
+/* ================= CHAT CHANNELS ================= */
 
 socket.on("chatList",list=>{
 
@@ -449,20 +433,22 @@ users.appendChild(div);
 });
 });
 
-/* ================= VC ================= */
+/* ================= VC LIST ================= */
 
 socket.on("vcList",list=>{
 
-voiceChannels=list;
+vcList=list;
 
 renderVC();
 });
 
 function renderVC(){
 
-voiceChannels.innerHTML="";
+const vcDiv=document.getElementById("voiceChannels");
 
-voiceChannels.forEach(v=>{
+vcDiv.innerHTML="";
+
+vcList.forEach(v=>{
 
 const div=document.createElement("div");
 
@@ -477,7 +463,7 @@ div.innerText="🔊 "+v;
 
 div.onclick=()=>joinVC(v);
 
-voiceChannels.appendChild(div);
+vcDiv.appendChild(div);
 });
 }
 
@@ -509,7 +495,7 @@ audio:true
 startSpeakingDetect();
 
 }
-catch(err){
+catch{
 
 alert("Mic denied");
 
@@ -581,7 +567,7 @@ new RTCIceCandidate(data.candidate)
 }
 });
 
-/* ================= PEER ================= */
+/* ================= CREATE PEER ================= */
 
 function createPeer(id,initiator){
 
@@ -665,9 +651,7 @@ const div=document.createElement("div");
 div.className="vcUser";
 
 const mic=u.muted?"🔇":"🎤";
-
 const deaf=u.deafened?"🎧":"";
-
 const speak=u.speaking?"📶":"";
 
 div.innerHTML=
@@ -804,7 +788,7 @@ users.set(socket.id,name);
 io.emit("users",Array.from(users.values()));
 });
 
-/* CHAT */
+/* MESSAGE */
 
 socket.on("message",m=>{
 
