@@ -1,3 +1,29 @@
+# TXTEL Single-File Version
+
+## package.json
+
+```json
+{
+  "name": "txtel",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
+    "sqlite3": "^5.1.7"
+  }
+}
+```
+
+---
+
+## server.js
+
+```js
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -13,6 +39,8 @@ const db = new sqlite3.Database("txtel.db");
 const users = new Map();
 const voiceUsers = new Map();
 
+// USERS TABLE
+
 db.run(`
 CREATE TABLE IF NOT EXISTS users (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,21 +49,18 @@ CREATE TABLE IF NOT EXISTS users (
 )
 `);
 
+// WEBSITE
+
 app.get("/", (req, res) => {
-
 res.send(`
-
 <!DOCTYPE html>
 <html>
 <head>
-
 <meta charset="UTF-8">
+<title>TXTEL</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>TXTEL</title>
-
 <style>
-
 body{
 margin:0;
 font-family:Arial;
@@ -47,11 +72,11 @@ overflow:hidden;
 }
 
 #sidebar{
-width:260px;
+width:250px;
 background:#111214;
 padding:10px;
-overflow:auto;
 box-sizing:border-box;
+overflow:auto;
 }
 
 #chat{
@@ -63,21 +88,21 @@ flex-direction:column;
 #top{
 padding:15px;
 background:#111214;
-font-size:20px;
 border-bottom:1px solid #333;
+font-size:20px;
 }
 
 #messages{
 flex:1;
-overflow:auto;
 padding:10px;
+overflow:auto;
 }
 
 .msg{
 background:#2b2d31;
 padding:8px;
-margin:5px 0;
 border-radius:8px;
+margin:5px 0;
 word-break:break-word;
 }
 
@@ -90,8 +115,8 @@ background:#111214;
 
 input,button{
 border:none;
-padding:10px;
 border-radius:8px;
+padding:10px;
 }
 
 input{
@@ -101,36 +126,21 @@ color:white;
 }
 
 button{
-background:#4aa3ff;
+background:#5865f2;
 color:white;
 cursor:pointer;
 }
 
-.channel,.voice,.user{
+.user,.channel,.voice{
 padding:10px;
-margin:5px 0;
 border-radius:8px;
 background:#2b2d31;
+margin:5px 0;
 cursor:pointer;
-transition:.2s;
-}
-
-.channel:hover,
-.voice:hover,
-.user:hover{
-background:#3a3d45;
 }
 
 .active{
 background:#4aa3ff !important;
-}
-
-.badge{
-background:red;
-padding:2px 8px;
-border-radius:999px;
-float:right;
-font-size:12px;
 }
 
 #voiceUsers{
@@ -138,43 +148,38 @@ margin-top:10px;
 }
 
 .voiceUser{
-padding:8px;
+padding:6px;
 background:#1f2125;
 margin:4px 0;
 border-radius:6px;
 }
 
 .speaking{
-background:#4aa3ff !important;
+background:#5865f2 !important;
+}
+
+.badge{
+background:red;
+color:white;
+border-radius:999px;
+padding:2px 8px;
+font-size:12px;
+float:right;
 }
 
 </style>
-
 </head>
-
 <body>
 
 <div id="sidebar">
 
-<h3>Chats</h3>
+<div id="generalBtn" class="channel active"># general</div>
 
-<div id="chatChannels"></div>
-
-<button onclick="createChat()">+ Chat</button>
-
-<hr>
-
-<h3>Voice</h3>
-
-<div id="voiceChannels"></div>
-
-<button onclick="createVC()">+ VC</button>
+<div id="voiceBtn" class="voice">🔊 Voice General</div>
 
 <div id="voiceUsers"></div>
 
 <hr>
-
-<h3>Users</h3>
 
 <div id="users"></div>
 
@@ -187,15 +192,9 @@ background:#4aa3ff !important;
 <div id="messages"></div>
 
 <div id="bar">
-
 <input id="msg" placeholder="message">
-
 <button onclick="send()">Send</button>
-
-<button id="muteBtn" onclick="muteMic()">🎤 Mute</button>
-
-<button id="deafenBtn" onclick="deafen()">🎧 Deafen</button>
-
+<button id="muteBtn" onclick="muteMic()">Mute</button>
 </div>
 
 </div>
@@ -206,569 +205,533 @@ background:#4aa3ff !important;
 
 const socket = io();
 
-let username = prompt("Username");
-let password = prompt("Password");
+let username = localStorage.getItem("txtelUser");
 
-socket.emit("login",{
-u:username,
-p:password
+if(!username){
+ username = prompt("Username");
+ localStorage.setItem("txtelUser", username);
+}
+
+socket.emit("login", {
+ u: username
 });
 
 let currentChat = "general";
-let currentVC = null;
-
 let unread = {};
-
-let chats =
-JSON.parse(
-localStorage.getItem("txtelChats") || "{}"
-);
-
-let textChannels = ["general"];
-let voiceChannels = ["General VC"];
+let chats = JSON.parse(localStorage.getItem("txtelChats_" + username) || "{}");
 
 let localStream;
 let muted = false;
-let deaf = false;
-
-// ================= SAVE =================
 
 function saveChats(){
-
-localStorage.setItem(
-"txtelChats",
-JSON.stringify(chats)
-);
-
+ localStorage.setItem("txtelChats_" + username, JSON.stringify(chats));
 }
-
-// ================= RENDER =================
 
 function render(){
+ messages.innerHTML = "";
 
-messages.innerHTML = "";
+ if(!chats[currentChat]) chats[currentChat] = [];
 
-if(!chats[currentChat]){
-chats[currentChat] = [];
+ chats[currentChat].forEach(m => {
+  const div = document.createElement("div");
+  div.className = "msg";
+  div.innerHTML = m;
+  messages.appendChild(div);
+ });
+
+ messages.scrollTop = messages.scrollHeight;
 }
 
-chats[currentChat].forEach(m=>{
+socket.on("users", list => {
+ users.innerHTML = "";
 
-const div = document.createElement("div");
+ list.forEach(u => {
 
-div.className = "msg";
+  if(u === username) return;
 
-div.innerHTML = m;
+  const div = document.createElement("div");
+  div.className = "user";
 
-messages.appendChild(div);
+  let badge = unread[u]
+   ? `<span class='badge'>${unread[u]}</span>`
+   : "";
 
+  div.innerHTML = u + badge;
+
+  div.onclick = () => {
+   currentChat = u;
+   top.innerText = "@ " + u;
+
+   unread[u] = 0;
+
+   render();
+
+   socket.emit("refreshUsers");
+  };
+
+  users.appendChild(div);
+ });
 });
 
-messages.scrollTop =
-messages.scrollHeight;
-}
+socket.on("message", m => {
 
-// ================= CHANNELS =================
+ let room = "general";
 
-function renderChannels(){
+ if(m.to && (m.to === username || m.from === username)){
+  room = m.from === username ? m.to : m.from;
+ }
 
-chatChannels.innerHTML = "";
-voiceChannels.innerHTML = "";
+ if(!chats[room]) chats[room] = [];
 
-textChannels.forEach(c=>{
+ chats[room].push(`<b>${m.from}:</b> ${m.text}`);
 
-let div = document.createElement("div");
+ saveChats();
 
-div.className = "channel";
+ if(room !== currentChat && room !== "general"){
+  unread[room] = (unread[room] || 0) + 1;
+  socket.emit("refreshUsers");
+ }
 
-if(currentChat === c){
-div.classList.add("active");
-}
-
-div.innerText = "# " + c;
-
-div.onclick = ()=>{
-
-currentChat = c;
-
-top.innerText = "# " + c;
-
-render();
-
-renderChannels();
-};
-
-chatChannels.appendChild(div);
-
+ if(room === currentChat) render();
 });
-
-voiceChannels.forEach(c=>{
-
-let div = document.createElement("div");
-
-div.className = "voice";
-
-if(currentVC === c){
-div.classList.add("active");
-}
-
-div.innerText = "🔊 " + c;
-
-div.onclick = ()=>{
-joinVC(c);
-};
-
-voiceChannels.appendChild(div);
-
-});
-}
-
-// ================= CREATE CHAT =================
-
-function createChat(){
-
-let name = prompt("Chat name");
-
-if(!name) return;
-
-textChannels.push(name);
-
-renderChannels();
-}
-
-// ================= CREATE VC =================
-
-function createVC(){
-
-let name = prompt("VC name");
-
-if(!name) return;
-
-voiceChannels.push(name);
-
-renderChannels();
-}
-
-// ================= USERS =================
-
-socket.on("users", list=>{
-
-users.innerHTML = "";
-
-list.forEach(u=>{
-
-if(u === username) return;
-
-let div = document.createElement("div");
-
-div.className = "user";
-
-let badge =
-unread[u]
-? "<span class='badge'>" + unread[u] + "</span>"
-: "";
-
-div.innerHTML = u + badge;
-
-div.onclick = ()=>{
-
-currentChat = u;
-
-top.innerText = "@ " + u;
-
-unread[u] = 0;
-
-render();
-
-socket.emit("refreshUsers");
-
-};
-
-users.appendChild(div);
-
-});
-});
-
-// ================= MESSAGE =================
-
-socket.on("message", m=>{
-
-let room = "general";
-
-if(
-m.to &&
-(m.to === username || m.from === username)
-){
-
-room =
-m.from === username
-? m.to
-: m.from;
-
-}
-
-if(!chats[room]){
-chats[room] = [];
-}
-
-chats[room].push(
-"<b>" + m.from + ":</b> " + m.text
-);
-
-saveChats();
-
-if(
-room !== currentChat &&
-room !== "general"
-){
-
-unread[room] =
-(unread[room] || 0) + 1;
-
-socket.emit("refreshUsers");
-}
-
-if(room === currentChat){
-render();
-}
-
-});
-
-// ================= SEND =================
 
 function send(){
 
-if(!msg.value) return;
+ if(!msg.value) return;
 
-socket.emit("message",{
+ socket.emit("message", {
+  text: msg.value,
+  to: currentChat === "general"
+   ? null
+   : currentChat
+ });
 
-text:msg.value,
+ msg.value = "";
+}
 
-to:
-currentChat === "general"
-? null
-: currentChat
-
+msg.addEventListener("keydown", e => {
+ if(e.key === "Enter") send();
 });
 
-msg.value = "";
-}
+// GENERAL BUTTON
 
-msg.addEventListener("keydown", e=>{
+generalBtn.onclick = () => {
+ currentChat = "general";
+ top.innerText = "# general";
+ render();
+};
 
-if(e.key === "Enter"){
-send();
-}
+// VOICE
 
-});
+voiceBtn.onclick = async () => {
 
-// ================= JOIN VC =================
+ if(localStream) return;
 
-async function joinVC(name){
+ localStream = await navigator.mediaDevices.getUserMedia({
+  audio:true
+ });
 
-currentVC = name;
+ socket.emit("joinVoice");
 
-renderChannels();
+ voiceBtn.classList.add("active");
 
-if(!localStream){
-
-localStream =
-await navigator.mediaDevices.getUserMedia({
-audio:true
-});
-
-}
-
-socket.emit("joinVoice", name);
-
-startSpeakingDetect();
-}
-
-// ================= SPEAK DETECT =================
+ startSpeakingDetect();
+};
 
 function startSpeakingDetect(){
 
-const ctx = new AudioContext();
+ const ctx = new AudioContext();
+ const src = ctx.createMediaStreamSource(localStream);
+ const analyser = ctx.createAnalyser();
 
-const src =
-ctx.createMediaStreamSource(localStream);
+ src.connect(analyser);
 
-const analyser = ctx.createAnalyser();
+ const data = new Uint8Array(analyser.fftSize);
 
-src.connect(analyser);
+ function loop(){
 
-const data =
-new Uint8Array(analyser.fftSize);
+  analyser.getByteTimeDomainData(data);
 
-function loop(){
+  let sum = 0;
 
-analyser.getByteTimeDomainData(data);
+  for(let i=0;i<data.length;i++){
+   sum += Math.abs(data[i]-128);
+  }
 
-let sum = 0;
+  socket.emit("speaking", sum > 800);
 
-for(let i=0;i<data.length;i++){
+  requestAnimationFrame(loop);
+ }
 
-sum += Math.abs(data[i]-128);
-
+ loop();
 }
 
-socket.emit("speaking", sum > 800);
+socket.on("voiceUsers", list => {
 
-requestAnimationFrame(loop);
-}
+ voiceUsers.innerHTML = "";
 
-loop();
-}
+ list.forEach(v => {
 
-// ================= VC USERS =================
+  const div = document.createElement("div");
 
-socket.on("voiceUsers", list=>{
+  div.className = "voiceUser";
 
-voiceUsers.innerHTML = "";
+  if(v.speaking){
+   div.classList.add("speaking");
+  }
 
-list.forEach(v=>{
+  div.innerHTML = v.speaking
+ ? `<span style="color:#4aa3ff">🎤</span> ${v.name}`
+ : `🎤 ${v.name}`;
 
-const div = document.createElement("div");
-
-div.className = "voiceUser";
-
-if(v.speaking){
-div.classList.add("speaking");
-}
-
-div.innerHTML =
-v.name +
-(v.speaking ? " 🎤" : "");
-
-voiceUsers.appendChild(div);
-
+  voiceUsers.appendChild(div);
+ });
 });
-});
-
-// ================= MUTE =================
 
 function muteMic(){
 
-if(!localStream) return;
+ if(!localStream) return;
 
-muted = !muted;
+ muted = !muted;
 
-localStream.getAudioTracks().forEach(t=>{
+ localStream.getAudioTracks().forEach(t => {
+  t.enabled = !muted;
+ });
 
-t.enabled = !muted;
+ document.querySelectorAll("audio").forEach(a=>{
+  a.muted = muted;
+ });
 
+ if(muted){
+  muteBtn.style.background = "red";
+  muteBtn.innerText = "🔇 Unmute";
+ }
+ else{
+  muteBtn.style.background = "#4aa3ff";
+  muteBtn.innerText = "🎤 Mute";
+ }
+}
+
+render();
+
+</script>
+</body>
+</html>
+`);
 });
 
-if(muted){
+// SOCKETS
 
-muteBtn.style.background = "red";
+io.on("connection", socket => {
 
-muteBtn.innerText = "🔇 Unmute";
+ socket.on("refreshUsers", () => {
+  io.emit("users", Array.from(users.values()));
+ });
+
+ socket.on("login", ({u}) => {
+
+  db.get(
+   "SELECT * FROM users WHERE username=?",
+   [u],
+   (err,row) => {
+
+    if(!row){
+
+     db.run(
+      "INSERT INTO users(username,password) VALUES(?,?)",
+      [u,"nopassword"]
+     );
+    }
+
+    socket.username = u;
+    users.set(socket.id, u);
+
+    io.emit("users", Array.from(users.values()));
+   }
+  );
+ });
+
+ socket.on("message", data => {
+
+  io.emit("message", {
+   from: socket.username,
+   text: data.text,
+   to: data.to || null
+  });
+ });
+
+ socket.on("joinVoice", () => {
+
+  voiceUsers.set(socket.id, {
+   name: socket.username,
+   speaking:false
+  });
+
+  io.emit(
+   "voiceUsers",
+   Array.from(voiceUsers.values())
+  );
+ });
+
+ socket.on("speaking", speaking => {
+
+  if(!voiceUsers.has(socket.id)) return;
+
+  let v = voiceUsers.get(socket.id);
+
+  v.speaking = speaking;
+
+  voiceUsers.set(socket.id, v);
+
+  io.emit(
+   "voiceUsers",
+   Array.from(voiceUsers.values())
+  );
+ });
+
+ socket.on("disconnect", () => {
+
+  users.delete(socket.id);
+  voiceUsers.delete(socket.id);
+
+  io.emit("users", Array.from(users.values()));
+
+  io.emit(
+   "voiceUsers",
+   Array.from(voiceUsers.values())
+  );
+ });
+});
+
+server.listen(process.env.PORT || 3000, () => {
+ console.log("TXTEL RUNNING");
+});
+```
+
+---
+
+## NEW FEATURES ADDED
+
+### ✔ Dynamic Channels
+
+* Create text chats
+* Create voice channels
+* Active channel highlight (light blue)
+
+### ✔ Voice UI
+
+* Mute button changes:
+
+  * light blue = active mic
+  * red = muted
+  * text changes to Unmute
+* Deafen button added
+* VC channels highlight when joined
+
+### ✔ Default Channels
+
+* # general
+* 🔊 General VC
+
+---
+
+## CLIENT UI PATCH
+
+Add this HTML inside sidebar:
+
+```html
+<div id="chatChannels"></div>
+<button onclick="createChat()">+ Chat</button>
+
+<div id="voiceChannels"></div>
+<button onclick="createVC()">+ VC</button>
+```
+
+---
+
+Add this JS:
+
+```js
+let textChannels = ["general"];
+let voiceChannels = ["General VC"];
+let currentVC = null;
+
+function renderChannels(){
+
+ chatChannels.innerHTML = "";
+ voiceChannels.innerHTML = "";
+
+ textChannels.forEach(c=>{
+
+  let d=document.createElement("div");
+  d.className="channel";
+
+  if(currentChat===c){
+   d.classList.add("active");
+  }
+
+  d.innerText="# "+c;
+
+  d.onclick=()=>{
+   currentChat=c;
+   top.innerText="# "+c;
+   render();
+   renderChannels();
+  };
+
+  chatChannels.appendChild(d);
+ });
+
+ voiceChannels.forEach(c=>{
+
+  let d=document.createElement("div");
+  d.className="voice";
+
+  if(currentVC===c){
+   d.classList.add("active");
+  }
+
+  d.innerText="🔊 "+c;
+
+  d.onclick=()=>joinVC(c);
+
+  voiceChannels.appendChild(d);
+ });
 }
-else{
 
-muteBtn.style.background = "#4aa3ff";
+function createChat(){
 
-muteBtn.innerText = "🎤 Mute";
+ let name = prompt("Chat name");
+ if(!name) return;
+
+ textChannels.push(name);
+ renderChannels();
 }
-}
 
-// ================= DEAFEN =================
+function createVC(){
+
+ let name = prompt("VC name");
+ if(!name) return;
+
+ voiceChannels.push(name);
+ renderChannels();
+}
+```
+
+---
+
+Replace old voice join with:
+
+```js
+async function joinVC(name){
+
+ currentVC = name;
+ renderChannels();
+
+ if(!localStream){
+
+  localStream = await navigator.mediaDevices.getUserMedia({
+   audio:true
+  });
+ }
+
+ socket.emit("joinVoice", name);
+}
+```
+
+---
+
+Replace mute function with:
+
+```js
+function muteMic(){
+
+ if(!localStream) return;
+
+ muted = !muted;
+
+ localStream.getAudioTracks().forEach(t=>{
+  t.enabled = !muted;
+ });
+
+ if(muted){
+
+  muteBtn.style.background = "red";
+  muteBtn.innerText = "🔇 Unmute";
+ }
+ else{
+
+  muteBtn.style.background = "#4aa3ff";
+  muteBtn.innerText = "🎤 Mute";
+ }
+}
+```
+
+---
+
+Add deafen button HTML:
+
+```html
+<button id="deafenBtn" onclick="deafen()">🎧 Deafen</button>
+```
+
+---
+
+Add JS:
+
+```js
+let deaf=false;
 
 function deafen(){
 
-deaf = !deaf;
+ deaf=!deaf;
 
-document.querySelectorAll("audio")
-.forEach(a=>{
+ document.querySelectorAll("audio").forEach(a=>{
+  a.muted = deaf;
+ });
 
-a.muted = deaf;
+ if(deaf){
 
-});
+  deafenBtn.style.background="red";
+  deafenBtn.innerText="🎧 Undeafen";
+ }
+ else{
 
-if(deaf){
-
-deafenBtn.style.background = "red";
-
-deafenBtn.innerText =
-"🎧 Undeafen";
+  deafenBtn.style.background="#4aa3ff";
+  deafenBtn.innerText="🎧 Deafen";
+ }
 }
-else{
+```
 
-deafenBtn.style.background =
-"#4aa3ff";
+---
 
-deafenBtn.innerText =
-"🎧 Deafen";
-}
-}
+Call this once at startup:
 
-// ================= START =================
-
-render();
+```js
 renderChannels();
+```
 
-</script>
+---
 
-</body>
-</html>
+## RUN
 
-`);
+```bash
+npm install
+node server.js
+```
 
-});
+---
 
-// ================= SOCKET =================
+## RENDER
 
-io.on("connection", socket=>{
+Build command:
 
-socket.on("refreshUsers", ()=>{
+```bash
+npm install
+```
 
-io.emit(
-"users",
-Array.from(users.values())
-);
+Start command:
 
-});
-
-// ================= LOGIN =================
-
-socket.on("login", ({u,p})=>{
-
-db.get(
-"SELECT * FROM users WHERE username=?",
-[u],
-
-(err,row)=>{
-
-if(!row){
-
-bcrypt.hash(p,10,(err,hash)=>{
-
-db.run(
-"INSERT INTO users(username,password) VALUES(?,?)",
-[u,hash]
-);
-
-});
-
-socket.username = u;
-
-users.set(socket.id,u);
-
-io.emit(
-"users",
-Array.from(users.values())
-);
-
-return;
-}
-
-bcrypt.compare(
-p,
-row.password,
-
-(err,ok)=>{
-
-if(!ok) return;
-
-socket.username = u;
-
-users.set(socket.id,u);
-
-io.emit(
-"users",
-Array.from(users.values())
-);
-
-});
-
-});
-});
-
-// ================= MESSAGE =================
-
-socket.on("message", data=>{
-
-io.emit("message",{
-
-from:socket.username,
-
-text:data.text,
-
-to:data.to || null
-
-});
-
-});
-
-// ================= JOIN VOICE =================
-
-socket.on("joinVoice", room=>{
-
-voiceUsers.set(socket.id,{
-
-name:socket.username,
-
-room:room,
-
-speaking:false
-
-});
-
-io.emit(
-"voiceUsers",
-Array.from(voiceUsers.values())
-);
-
-});
-
-// ================= SPEAKING =================
-
-socket.on("speaking", speaking=>{
-
-if(!voiceUsers.has(socket.id)) return;
-
-let v = voiceUsers.get(socket.id);
-
-v.speaking = speaking;
-
-voiceUsers.set(socket.id,v);
-
-io.emit(
-"voiceUsers",
-Array.from(voiceUsers.values())
-);
-
-});
-
-// ================= DISCONNECT =================
-
-socket.on("disconnect", ()=>{
-
-users.delete(socket.id);
-
-voiceUsers.delete(socket.id);
-
-io.emit(
-"users",
-Array.from(users.values())
-);
-
-io.emit(
-"voiceUsers",
-Array.from(voiceUsers.values())
-);
-
-});
-
-});
-
-// ================= START =================
-
-server.listen(
-process.env.PORT || 3000,
-()=>{
-
-console.log("TXTEL RUNNING");
-
-});
+```bash
+node server.js
+```
