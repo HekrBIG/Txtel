@@ -6,16 +6,18 @@ const app=express();
 const server=http.createServer(app);
 const io=new Server(server,{cors:{origin:"*"}});
 
-/* STATE */
+/* ================= STATE ================= */
+
 let chats=["general"];
 let vcs=["General VC"];
 
 let messages={};
-let msgId=0;
+let unread={}; // 🔵 NOTIF BADGES (count per channel)
 
 const users=new Map();
 
-/* FRONTEND */
+/* ================= FRONTEND ================= */
+
 app.get("/",(req,res)=>{
 res.send(`
 <!DOCTYPE html>
@@ -45,7 +47,6 @@ border-right:1px solid #222;
 overflow:auto;
 }
 
-.section{margin-bottom:15px;}
 .title{font-size:12px;opacity:0.6;margin-bottom:6px;}
 
 .item{
@@ -54,10 +55,30 @@ padding:10px;
 border-radius:8px;
 margin:5px 0;
 cursor:pointer;
+position:relative;
 }
 
 .item:hover{background:#313338;}
-.active{background:#4aa3ff!important;}
+
+.active{
+background:#4aa3ff !important;
+}
+
+/* 🔵 UNREAD BADGE */
+.badge{
+position:absolute;
+right:8px;
+top:8px;
+background:#5865f2;
+color:white;
+border-radius:50%;
+width:18px;
+height:18px;
+font-size:12px;
+display:flex;
+align-items:center;
+justify-content:center;
+}
 
 /* CHAT */
 #chat{
@@ -87,11 +108,6 @@ margin:5px 0;
 border-radius:8px;
 }
 
-.actions button{
-margin-left:5px;
-font-size:11px;
-}
-
 #bar{
 display:flex;
 gap:6px;
@@ -117,47 +133,6 @@ color:white;
 cursor:pointer;
 }
 
-/* SETTINGS */
-#settings{
-position:fixed;
-bottom:120px;
-left:10px;
-width:240px;
-background:#111214;
-border:1px solid #222;
-padding:10px;
-border-radius:10px;
-display:none;
-}
-
-.smallBtn{
-width:100%;
-margin:5px 0;
-background:#2b2d31;
-}
-
-/* VC PANEL */
-#userPanel{
-position:fixed;
-bottom:0;
-left:0;
-width:300px;
-background:#111214;
-padding:10px;
-border-top:1px solid #222;
-}
-
-#controls{
-display:flex;
-gap:6px;
-}
-
-#controls button{
-flex:1;
-}
-
-audio{display:none;}
-
 </style>
 </head>
 
@@ -165,17 +140,13 @@ audio{display:none;}
 
 <div id="sidebar">
 
-<div class="section">
 <div class="title">TEXT CHANNELS</div>
 <div id="channels"></div>
 <button onclick="createChat()">+ Chat</button>
-</div>
 
-<div class="section">
-<div class="title">VOICE CHANNELS</div>
+<div class="title" style="margin-top:15px;">VOICE CHANNELS</div>
 <div id="voice"></div>
 <button onclick="createVC()">+ VC</button>
-</div>
 
 </div>
 
@@ -183,7 +154,7 @@ audio{display:none;}
 
 <div id="top">
 <div id="room"># general</div>
-<button onclick="toggleSettings()">⚙</button>
+<button onclick="rename()">Rename</button>
 </div>
 
 <div id="messages"></div>
@@ -195,36 +166,28 @@ audio{display:none;}
 
 </div>
 
-<div id="settings">
-<button class="smallBtn" onclick="toggleTheme()">Theme</button>
-<button class="smallBtn" onclick="toggleNotif()">Notif</button>
-<input class="smallBtn" id="pfp" placeholder="PFP URL">
-<button class="smallBtn" onclick="setPfp()">Set PFP</button>
-<button class="smallBtn" onclick="toggleSettings()">Close</button>
-</div>
-
-<div id="userPanel">
-<div id="controls">
-<button onclick="mute()">🎤</button>
-<button onclick="deafen()">🎧</button>
-<button onclick="leaveVC()" style="background:red;">Leave</button>
-</div>
-</div>
-
 <script src="/socket.io/socket.io.js"></script>
 
 <script>
 
 const socket=io();
 
+/* STATE */
 let user=localStorage.getItem("u")||("user"+Math.floor(Math.random()*9999));
 localStorage.setItem("u",user);
 
 let current="general";
 
 let store={};
+let unread={};
 
+/* LOGIN */
 socket.emit("login",user);
+
+/* ENTER SEND */
+msg.addEventListener("keydown",e=>{
+if(e.key==="Enter") send();
+});
 
 /* SEND */
 function send(){
@@ -233,6 +196,15 @@ if(!t) return;
 
 socket.emit("msg",{to:current,text:t});
 msg.value="";
+}
+
+/* RENAME USER */
+function rename(){
+let n=prompt("New name:");
+if(n){
+user=n;
+socket.emit("rename",n);
+}
 }
 
 /* CREATE CHAT */
@@ -247,40 +219,63 @@ let n=prompt("VC name");
 if(n) socket.emit("createVC",n);
 }
 
-/* CHAT LIST */
+/* CHANNELS */
 socket.on("chatList",list=>{
+render(list);
+});
+
+function render(list){
+
 channels.innerHTML="";
 
 list.forEach(c=>{
 let d=document.createElement("div");
 d.className="item";
 
-if(c===current)d.classList.add("active");
+if(c===current){
+d.classList.add("active");
+unread[c]=0;
+}
 
 d.innerText="# "+c;
+
+/* 🔵 BADGE */
+if(unread[c] && c!==current){
+let b=document.createElement("div");
+b.className="badge";
+b.innerText=unread[c];
+d.appendChild(b);
+}
 
 d.onclick=()=>{
 current=c;
 room.innerText="# "+c;
-render();
+unread[c]=0;
+render(list);
+load();
 };
 
 channels.appendChild(d);
 });
-});
+}
 
 /* MESSAGES */
 socket.on("msg",m=>{
 
 if(!store[m.to]) store[m.to]=[];
-
 store[m.to].push(m);
 
-if(m.to===current) render();
+/* unread counter */
+if(m.to!==current){
+unread[m.to]=(unread[m.to]||0)+1;
+}
+
+if(m.to===current) load();
+renderedListLast=listCache;
 });
 
-function render(){
-
+/* LOAD */
+function load(){
 messages.innerHTML="";
 
 let list=store[current]||[];
@@ -289,55 +284,24 @@ list.forEach(m=>{
 let d=document.createElement("div");
 d.className="msg";
 
-d.innerHTML=
-"<b>"+m.from+"</b>: "+m.text+
-"<div class='actions'>"+
-"<button onclick=react("+m.id+",'👍')>👍</button>"+
-"<button onclick=react("+m.id+",'😂')>😂</button>"+
-"<button onclick=edit("+m.id+")>✏️</button>"+
-"<button onclick=del("+m.id+")>🗑</button>"+
-"</div>";
+d.innerHTML="<b>"+m.from+"</b>: "+m.text;
 
 messages.appendChild(d);
 });
 }
 
-/* ACTIONS */
-function edit(id){
-let t=prompt("Edit:");
-if(t) socket.emit("edit",{id,text:t});
-}
+/* VC LIST */
+socket.on("vcList",list=>{
+voice.innerHTML="";
 
-function del(id){
-socket.emit("delete",id);
-}
-
-function react(id,r){
-socket.emit("react",{id,r});
-}
-
-/* SETTINGS */
-function toggleSettings(){
-settings.style.display=
-settings.style.display==="block"?"none":"block";
-}
-
-function toggleTheme(){
-document.body.style.background=
-document.body.style.background==="#1e1f22"?"white":"#1e1f22";
-}
-
-function toggleNotif(){
-alert("notif");
-}
-
-function setPfp(){
-localStorage.setItem("pfp",pfp.value);
-}
-
-function mute(){}
-function deafen(){}
-function leaveVC(){}
+list.forEach(v=>{
+let d=document.createElement("div");
+d.className="item";
+d.innerText="🔊 "+v;
+d.onclick=()=>alert("VC join: "+v);
+voice.appendChild(d);
+});
+});
 
 </script>
 
@@ -346,13 +310,22 @@ function leaveVC(){}
 `);
 });
 
-/* SOCKET */
+/* ================= SOCKET ================= */
+
 io.on("connection",socket=>{
 
 socket.on("login",u=>{
 socket.user=u;
 users.set(socket.id,u);
+
 socket.emit("chatList",chats);
+socket.emit("vcList",vcs);
+});
+
+/* RENAME */
+socket.on("rename",n=>{
+socket.user=n;
+users.set(socket.id,n);
 });
 
 /* CHAT */
@@ -364,13 +337,13 @@ io.emit("chatList",chats);
 /* VC */
 socket.on("createVC",n=>{
 if(!vcs.includes(n)) vcs.push(n);
+io.emit("vcList",vcs);
 });
 
-/* MSG */
+/* MESSAGE */
 socket.on("msg",d=>{
 
 const m={
-id:msgId++,
 from:socket.user,
 to:d.to,
 text:d.text
@@ -379,13 +352,8 @@ text:d.text
 io.emit("msg",m);
 });
 
-/* EDIT / DELETE / REACT */
-socket.on("edit",d=>io.emit("edit",d));
-socket.on("delete",id=>io.emit("delete",id));
-socket.on("react",d=>io.emit("react",d));
-
 });
 
 server.listen(3000,()=>{
-console.log("TXTEL STABLE RUNNING");
+console.log("TXTEL FINAL CLEAN RUNNING");
 });
