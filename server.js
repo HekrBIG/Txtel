@@ -14,38 +14,40 @@ let currentRoom = "general";
 let currentVC = null;
 
 let chats = {};
-let textChannels = [];
-let vcChannels = [];
+let channels = [];
+let vcs = [];
 
 let peers = {};
 let localStream = null;
+let screenStream = null;
 
 let muted = false;
 let deafened = false;
 
 let unread = {};
-let typingUsers = new Set();
+let typing = {};
 let selectedMsg = null;
-
-function el(id){return document.getElementById(id)}
 
 function isImage(f){
 return /\.(png|jpg|jpeg|gif|webp)$/i.test(f);
 }
 
+/* CHAT */
+
 socket.on("chatList", list => {
-textChannels = list;
+channels = list;
 renderChats();
 });
 
 function renderChats(){
-channels.innerHTML = "";
-textChannels.forEach(c => {
+channelsEl.innerHTML = "";
+
+channels.forEach(c => {
 let d = document.createElement("div");
 d.className = "item";
 if(c === currentRoom) d.classList.add("active");
 
-d.innerHTML = c + (unread[c] ? ` <span class="badge">${unread[c]}</span>` : "");
+d.innerHTML = c + (unread[c] ? ` <span class="badge"></span>` : "");
 
 d.onclick = () => {
 currentRoom = c;
@@ -54,36 +56,44 @@ renderChats();
 renderMessages();
 };
 
-channels.appendChild(d);
+channelsEl.appendChild(d);
 });
 }
 
 function addChat(){
-let n = prompt("Chat name");
+let n = prompt("Chat");
 if(n) socket.emit("createChat", n);
 }
 
+/* VC */
+
 socket.on("vcList", list => {
-vcChannels = list;
-renderVCs();
+vcs = list;
+renderVC();
 });
 
-function renderVCs(){
+function renderVC(){
 voiceChannels.innerHTML = "";
-vcChannels.forEach(v => {
+
+vcs.forEach(v => {
 let d = document.createElement("div");
 d.className = "item";
 if(v === currentVC) d.classList.add("active");
+
 d.innerText = "🔊 " + v;
+
 d.onclick = () => joinVC(v);
+
 voiceChannels.appendChild(d);
 });
 }
 
 function addVC(){
-let n = prompt("VC name");
+let n = prompt("VC");
 if(n) socket.emit("createVC", n);
 }
+
+/* SEND */
 
 function send(){
 let text = msgInput.value.trim();
@@ -103,43 +113,15 @@ socket.emit("typing", { room: currentRoom, user: username });
 if(e.key === "Enter") send();
 });
 
-document.addEventListener("contextmenu", e => {
-e.preventDefault();
-let msgEl = e.target.closest(".msg");
-if(!msgEl) return;
-selectedMsg = msgEl.dataset.id;
-contextMenu.style.display = "block";
-contextMenu.style.left = e.pageX + "px";
-contextMenu.style.top = e.pageY + "px";
-});
+/* FILE */
 
-document.addEventListener("click", () => {
-contextMenu.style.display = "none";
-});
+fileInput.onchange = () => upload(fileInput.files[0]);
 
-function editMsg(){
-let t = prompt("Edit message");
-socket.emit("editMessage", { id: selectedMsg, text: t });
-contextMenu.style.display = "none";
-}
+async function upload(file){
+let f = new FormData();
+f.append("file", file);
 
-function deleteMsg(){
-socket.emit("deleteMessage", { id: selectedMsg });
-contextMenu.style.display = "none";
-}
-
-document.addEventListener("drop", async e => {
-e.preventDefault();
-uploadFile(e.dataTransfer.files[0]);
-});
-
-fileInput.onchange = () => uploadFile(fileInput.files[0]);
-
-async function uploadFile(file){
-let form = new FormData();
-form.append("file", file);
-
-let res = await fetch("/upload", { method:"POST", body:form });
+let res = await fetch("/upload", { method:"POST", body:f });
 let data = await res.json();
 
 socket.emit("message", {
@@ -148,6 +130,8 @@ file: data.url,
 text: file.name
 });
 }
+
+/* RECEIVE */
 
 socket.on("message", m => {
 
@@ -160,7 +144,6 @@ notify(m);
 }
 
 renderChats();
-
 if(m.room === currentRoom) renderMessages();
 });
 
@@ -177,6 +160,8 @@ chats[r] = chats[r].filter(m => m.id !== id);
 }
 renderMessages();
 });
+
+/* RENDER MSG */
 
 function renderMessages(){
 messages.innerHTML = "";
@@ -212,6 +197,8 @@ messages.appendChild(d);
 messages.scrollTop = messages.scrollHeight;
 }
 
+/* USERS */
+
 socket.on("users", list => {
 users.innerHTML = "";
 list.forEach(u => {
@@ -222,8 +209,11 @@ users.appendChild(d);
 });
 });
 
+/* VC USERS */
+
 socket.on("vcUsers", list => {
 vcUsers.innerHTML = "";
+
 list.forEach(u => {
 if(u.room !== currentVC) return;
 
@@ -236,13 +226,15 @@ vcUsers.appendChild(d);
 });
 });
 
+/* VC */
+
 async function joinVC(room){
 currentVC = room;
 vcNameSmall.innerText = "🔊 " + room;
 
 if(!localStream){
-localStream = await navigator.mediaDevices.getUserMedia({ audio:true });
-startSpeakingDetect();
+localStream = await navigator.mediaDevices.getUserMedia({ audio:true, video:true });
+startSpeaking();
 }
 
 socket.emit("joinVC", room);
@@ -254,18 +246,20 @@ vcNameSmall.innerText = "Not connected";
 socket.emit("leaveVC");
 }
 
-function startSpeakingDetect(){
+/* SPEAK */
+
+function startSpeaking(){
 let ctx = new AudioContext();
 let src = ctx.createMediaStreamSource(localStream);
-let analyser = ctx.createAnalyser();
-src.connect(analyser);
+let a = ctx.createAnalyser();
+src.connect(a);
 
-let data = new Uint8Array(analyser.fftSize);
+let data = new Uint8Array(a.fftSize);
 
 function loop(){
-analyser.getByteTimeDomainData(data);
-let sum = 0;
+a.getByteTimeDomainData(data);
 
+let sum = 0;
 for(let i=0;i<data.length;i++){
 sum += Math.abs(data[i]-128);
 }
@@ -277,16 +271,40 @@ requestAnimationFrame(loop);
 loop();
 }
 
-function notify(m){
-if(Notification.permission === "granted"){
-new Notification(m.from, { body: m.text || "file" });
+/* SCREEN SHARE */
+
+async function startScreen(){
+screenStream = await navigator.mediaDevices.getDisplayMedia({ video:true, audio:true });
+
+let track = screenStream.getVideoTracks()[0];
+
+Object.values(peers).forEach(pc => {
+let sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+if(sender) sender.replaceTrack(track);
+else pc.addTrack(track, screenStream);
+});
+
+track.onended = stopScreen;
 }
 
-let a = new Audio("/ping.mp3");
-a.play().catch(()=>{});
+function stopScreen(){
+if(!screenStream) return;
+
+screenStream.getTracks().forEach(t => t.stop());
+screenStream = null;
+
+navigator.mediaDevices.getUserMedia({ video:true, audio:true })
+.then(cam => {
+let t = cam.getVideoTracks()[0];
+
+Object.values(peers).forEach(pc => {
+let sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+if(sender) sender.replaceTrack(t);
+});
+});
 }
 
-Notification.requestPermission();
+/* MUTE */
 
 function muteMic(){
 muted = !muted;
@@ -294,8 +312,22 @@ localStream.getAudioTracks().forEach(t => t.enabled = !muted);
 socket.emit("vcState", { type:"mute", state:muted });
 }
 
+/* DEAF */
+
 function deafen(){
 deafened = !deafened;
 document.querySelectorAll("audio").forEach(a => a.muted = deafened);
 socket.emit("vcState", { type:"deafen", state:deafened });
 }
+
+/* NOTIFY */
+
+function notify(m){
+if(Notification.permission === "granted"){
+new Notification(m.from, { body:m.text || "file" });
+}
+let a = new Audio("/ping.mp3");
+a.play().catch(()=>{});
+}
+
+Notification.requestPermission();
