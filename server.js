@@ -1,333 +1,156 @@
-const socket = io();
+const express=require("express");
+const http=require("http");
+const {Server}=require("socket.io");
+const multer=require("multer");
+const path=require("path");
+const fs=require("fs");
 
-let username = localStorage.getItem("txtelUser");
+const app=express();
+const server=http.createServer(app);
+const io=new Server(server,{cors:{origin:"*"}});
 
-if (!username) {
-username = prompt("Username");
-if (!username) username = "user" + Math.floor(Math.random() * 9999);
-localStorage.setItem("txtelUser", username);
+/* ================= FILES ================= */
+
+if(!fs.existsSync("uploads")){
+fs.mkdirSync("uploads");
 }
 
-socket.emit("login", username);
+app.use("/uploads",express.static("uploads"));
 
-let currentRoom = "general";
-let currentVC = null;
-
-let chats = {};
-let channels = [];
-let vcs = [];
-
-let peers = {};
-let localStream = null;
-let screenStream = null;
-
-let muted = false;
-let deafened = false;
-
-let unread = {};
-let typing = {};
-let selectedMsg = null;
-
-function isImage(f){
-return /\.(png|jpg|jpeg|gif|webp)$/i.test(f);
+const storage=multer.diskStorage({
+destination:(req,file,cb)=>{
+cb(null,"uploads/");
+},
+filename:(req,file,cb)=>{
+cb(null,Date.now()+path.extname(file.originalname));
 }
-
-/* CHAT */
-
-socket.on("chatList", list => {
-channels = list;
-renderChats();
 });
 
-function renderChats(){
-channelsEl.innerHTML = "";
+const upload=multer({storage});
 
-channels.forEach(c => {
-let d = document.createElement("div");
-d.className = "item";
-if(c === currentRoom) d.classList.add("active");
-
-d.innerHTML = c + (unread[c] ? ` <span class="badge"></span>` : "");
-
-d.onclick = () => {
-currentRoom = c;
-unread[c] = 0;
-renderChats();
-renderMessages();
-};
-
-channelsEl.appendChild(d);
-});
-}
-
-function addChat(){
-let n = prompt("Chat");
-if(n) socket.emit("createChat", n);
-}
-
-/* VC */
-
-socket.on("vcList", list => {
-vcs = list;
-renderVC();
+app.post("/upload",upload.single("file"),(req,res)=>{
+if(!req.file) return res.status(400).json({error:"no file"});
+res.json({url:"/uploads/"+req.file.filename});
 });
 
-function renderVC(){
-voiceChannels.innerHTML = "";
+/* ================= STATE ================= */
 
-vcs.forEach(v => {
-let d = document.createElement("div");
-d.className = "item";
-if(v === currentVC) d.classList.add("active");
+const users=new Map();
+const vcStates=new Map();
 
-d.innerText = "🔊 " + v;
+let chats=["general"];
+let vcs=["General VC"];
 
-d.onclick = () => joinVC(v);
+/* ================= SOCKET ================= */
 
-voiceChannels.appendChild(d);
-});
-}
+io.on("connection",socket=>{
 
-function addVC(){
-let n = prompt("VC");
-if(n) socket.emit("createVC", n);
-}
+socket.on("login",name=>{
+socket.username=name||"user";
 
-/* SEND */
+users.set(socket.id,socket.username);
 
-function send(){
-let text = msgInput.value.trim();
-if(!text) return;
+socket.emit("chatList",chats);
+socket.emit("vcList",vcs);
 
-socket.emit("message", {
-room: currentRoom,
-text
+io.emit("users",Array.from(users.values()));
 });
 
-msgInput.value = "";
+/* CHAT CREATE */
+
+socket.on("createChat",name=>{
+if(!name) return;
+if(!chats.includes(name)){
+chats.push(name);
+io.emit("chatList",chats);
 }
-
-msgInput.addEventListener("keydown", e => {
-socket.emit("typing", { room: currentRoom, user: username });
-
-if(e.key === "Enter") send();
 });
 
-/* FILE */
+/* VC CREATE */
 
-fileInput.onchange = () => upload(fileInput.files[0]);
-
-async function upload(file){
-let f = new FormData();
-f.append("file", file);
-
-let res = await fetch("/upload", { method:"POST", body:f });
-let data = await res.json();
-
-socket.emit("message", {
-room: currentRoom,
-file: data.url,
-text: file.name
-});
+socket.on("createVC",name=>{
+if(!name) return;
+if(!vcs.includes(name)){
+vcs.push(name);
+io.emit("vcList",vcs);
 }
-
-/* RECEIVE */
-
-socket.on("message", m => {
-
-if(!chats[m.room]) chats[m.room] = [];
-chats[m.room].push(m);
-
-if(m.room !== currentRoom){
-unread[m.room] = (unread[m.room] || 0) + 1;
-notify(m);
-}
-
-renderChats();
-if(m.room === currentRoom) renderMessages();
 });
 
-socket.on("messageEdited", m => {
-let arr = chats[m.room] || [];
-let msg = arr.find(x => x.id === m.id);
-if(msg) msg.text = m.text;
-renderMessages();
-});
+/* MESSAGE */
 
-socket.on("messageDeleted", id => {
-for(let r in chats){
-chats[r] = chats[r].filter(m => m.id !== id);
-}
-renderMessages();
-});
+socket.on("message",m=>{
+if(!m) return;
 
-/* RENDER MSG */
-
-function renderMessages(){
-messages.innerHTML = "";
-
-(chats[currentRoom] || []).forEach(m => {
-
-let d = document.createElement("div");
-d.className = "msg";
-d.dataset.id = m.id;
-
-let html = "";
-
-if(m.pfp){
-html += `<img class="pfp" src="${m.pfp}">`;
-}
-
-html += "<b>" + m.from + ":</b> ";
-
-if(m.file){
-if(isImage(m.file)){
-html += `<br><img src="${m.file}">`;
-}else{
-html += `<br><a href="${m.file}" target="_blank">📎 ${m.text}</a>`;
-}
-}else{
-html += m.text;
-}
-
-d.innerHTML = html;
-messages.appendChild(d);
-});
-
-messages.scrollTop = messages.scrollHeight;
-}
-
-/* USERS */
-
-socket.on("users", list => {
-users.innerHTML = "";
-list.forEach(u => {
-let d = document.createElement("div");
-d.className = "item";
-d.innerText = u;
-users.appendChild(d);
+io.emit("message",{
+id:Date.now()+Math.random(),
+from:socket.username,
+room:m.room,
+text:m.text||"",
+file:m.file||null,
+time:Date.now()
 });
 });
 
-/* VC USERS */
+/* JOIN VC */
 
-socket.on("vcUsers", list => {
-vcUsers.innerHTML = "";
+socket.on("joinVC",room=>{
 
-list.forEach(u => {
-if(u.room !== currentVC) return;
-
-let d = document.createElement("div");
-d.className = "vcMember";
-if(u.speaking) d.classList.add("speaking");
-
-d.innerHTML = `<b>${u.name}</b>`;
-vcUsers.appendChild(d);
-});
+vcStates.set(socket.id,{
+id:socket.id,
+name:socket.username,
+room,
+muted:false,
+deafened:false,
+speaking:false,
+volume:0
 });
 
-/* VC */
-
-async function joinVC(room){
-currentVC = room;
-vcNameSmall.innerText = "🔊 " + room;
-
-if(!localStream){
-localStream = await navigator.mediaDevices.getUserMedia({ audio:true, video:true });
-startSpeaking();
-}
-
-socket.emit("joinVC", room);
-}
-
-function leaveVC(){
-currentVC = null;
-vcNameSmall.innerText = "Not connected";
-socket.emit("leaveVC");
-}
-
-/* SPEAK */
-
-function startSpeaking(){
-let ctx = new AudioContext();
-let src = ctx.createMediaStreamSource(localStream);
-let a = ctx.createAnalyser();
-src.connect(a);
-
-let data = new Uint8Array(a.fftSize);
-
-function loop(){
-a.getByteTimeDomainData(data);
-
-let sum = 0;
-for(let i=0;i<data.length;i++){
-sum += Math.abs(data[i]-128);
-}
-
-socket.emit("speaking", sum > 900);
-requestAnimationFrame(loop);
-}
-
-loop();
-}
-
-/* SCREEN SHARE */
-
-async function startScreen(){
-screenStream = await navigator.mediaDevices.getDisplayMedia({ video:true, audio:true });
-
-let track = screenStream.getVideoTracks()[0];
-
-Object.values(peers).forEach(pc => {
-let sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
-if(sender) sender.replaceTrack(track);
-else pc.addTrack(track, screenStream);
+io.emit("vcUsers",Array.from(vcStates.values()));
 });
 
-track.onended = stopScreen;
-}
+/* VC SPEAK */
 
-function stopScreen(){
-if(!screenStream) return;
+socket.on("speaking",state=>{
+if(!vcStates.has(socket.id)) return;
 
-screenStream.getTracks().forEach(t => t.stop());
-screenStream = null;
+let u=vcStates.get(socket.id);
+u.speaking=!!state;
 
-navigator.mediaDevices.getUserMedia({ video:true, audio:true })
-.then(cam => {
-let t = cam.getVideoTracks()[0];
+vcStates.set(socket.id,u);
 
-Object.values(peers).forEach(pc => {
-let sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
-if(sender) sender.replaceTrack(t);
+io.emit("vcUsers",Array.from(vcStates.values()));
 });
+
+/* VC STATE (mute/deafen) */
+
+socket.on("vcState",data=>{
+if(!vcStates.has(socket.id)) return;
+
+let u=vcStates.get(socket.id);
+
+if(data.type==="mute") u.muted=!!data.state;
+if(data.type==="deafen") u.deafened=!!data.state;
+
+vcStates.set(socket.id,u);
+
+io.emit("vcUsers",Array.from(vcStates.values()));
 });
-}
 
-/* MUTE */
+/* DISCONNECT */
 
-function muteMic(){
-muted = !muted;
-localStream.getAudioTracks().forEach(t => t.enabled = !muted);
-socket.emit("vcState", { type:"mute", state:muted });
-}
+socket.on("disconnect",()=>{
 
-/* DEAF */
+users.delete(socket.id);
+vcStates.delete(socket.id);
 
-function deafen(){
-deafened = !deafened;
-document.querySelectorAll("audio").forEach(a => a.muted = deafened);
-socket.emit("vcState", { type:"deafen", state:deafened });
-}
+io.emit("users",Array.from(users.values()));
+io.emit("vcUsers",Array.from(vcStates.values()));
+});
 
-/* NOTIFY */
+});
 
-function notify(m){
-if(Notification.permission === "granted"){
-new Notification(m.from, { body:m.text || "file" });
-}
-let a = new Audio("/ping.mp3");
-a.play().catch(()=>{});
-}
+/* ================= START ================= */
 
-Notification.requestPermission();
+server.listen(process.env.PORT||3000,()=>{
+console.log("TXTEL READY - DEPLOY OK");
+});
