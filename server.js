@@ -6,8 +6,7 @@ const app=express();
 const server=http.createServer(app);
 const io=new Server(server,{cors:{origin:"*"}});
 
-/* ================= STATE ================= */
-
+/* STATE */
 let chats=["general"];
 let vcs=["General VC"];
 
@@ -16,8 +15,7 @@ let msgId=0;
 
 const users=new Map();
 
-/* ================= FRONTEND ================= */
-
+/* FRONTEND */
 app.get("/",(req,res)=>{
 res.send(`
 <!DOCTYPE html>
@@ -38,6 +36,7 @@ color:white;
 overflow:hidden;
 }
 
+/* SIDEBAR */
 #sidebar{
 width:300px;
 background:#0f1012;
@@ -45,6 +44,9 @@ padding:12px;
 border-right:1px solid #222;
 overflow:auto;
 }
+
+.section{margin-bottom:15px;}
+.title{font-size:12px;opacity:0.6;margin-bottom:6px;}
 
 .item{
 background:#232428;
@@ -57,6 +59,7 @@ cursor:pointer;
 .item:hover{background:#313338;}
 .active{background:#4aa3ff!important;}
 
+/* CHAT */
 #chat{
 flex:1;
 display:flex;
@@ -66,9 +69,9 @@ flex-direction:column;
 #top{
 padding:12px;
 background:#111214;
+border-bottom:1px solid #222;
 display:flex;
 justify-content:space-between;
-border-bottom:1px solid #222;
 }
 
 #messages{
@@ -114,6 +117,7 @@ color:white;
 cursor:pointer;
 }
 
+/* SETTINGS */
 #settings{
 position:fixed;
 bottom:120px;
@@ -132,6 +136,7 @@ margin:5px 0;
 background:#2b2d31;
 }
 
+/* VC PANEL */
 #userPanel{
 position:fixed;
 bottom:0;
@@ -151,6 +156,8 @@ gap:6px;
 flex:1;
 }
 
+audio{display:none;}
+
 </style>
 </head>
 
@@ -158,16 +165,14 @@ flex:1;
 
 <div id="sidebar">
 
-<div>
-<div style="font-size:12px;opacity:0.6">TEXT</div>
+<div class="section">
+<div class="title">TEXT CHANNELS</div>
 <div id="channels"></div>
 <button onclick="createChat()">+ Chat</button>
 </div>
 
-<hr>
-
-<div>
-<div style="font-size:12px;opacity:0.6">VOICE</div>
+<div class="section">
+<div class="title">VOICE CHANNELS</div>
 <div id="voice"></div>
 <button onclick="createVC()">+ VC</button>
 </div>
@@ -216,14 +221,9 @@ let user=localStorage.getItem("u")||("user"+Math.floor(Math.random()*9999));
 localStorage.setItem("u",user);
 
 let current="general";
-let mode="chat";
 
 let store={};
 
-let muted=false;
-let deafened=false;
-
-/* LOGIN */
 socket.emit("login",user);
 
 /* SEND */
@@ -231,7 +231,7 @@ function send(){
 let t=msg.value.trim();
 if(!t) return;
 
-socket.emit("send",{to:current,text:t});
+socket.emit("msg",{to:current,text:t});
 msg.value="";
 }
 
@@ -247,7 +247,7 @@ let n=prompt("VC name");
 if(n) socket.emit("createVC",n);
 }
 
-/* RENDER CHATS */
+/* CHAT LIST */
 socket.on("chatList",list=>{
 channels.innerHTML="";
 
@@ -263,14 +263,11 @@ d.onclick=()=>{
 current=c;
 room.innerText="# "+c;
 render();
-renderChats(list);
 };
 
 channels.appendChild(d);
 });
 });
-
-function renderChats(list){}
 
 /* MESSAGES */
 socket.on("msg",m=>{
@@ -279,9 +276,7 @@ if(!store[m.to]) store[m.to]=[];
 
 store[m.to].push(m);
 
-if(m.to===current){
-render();
-}
+if(m.to===current) render();
 });
 
 function render(){
@@ -294,14 +289,13 @@ list.forEach(m=>{
 let d=document.createElement("div");
 d.className="msg";
 
-/* SAFE (NO TEMPLATE STRINGS BUG) */
-d.innerHTML =
+d.innerHTML=
 "<b>"+m.from+"</b>: "+m.text+
 "<div class='actions'>"+
-"<button onclick=\"react("+m.id+",'👍')\">👍</button>"+
-"<button onclick=\"react("+m.id+",'😂')\">😂</button>"+
-"<button onclick=\"edit("+m.id+")\">✏️</button>"+
-"<button onclick=\"del("+m.id+")\">🗑</button>"+
+"<button onclick=react("+m.id+",'👍')>👍</button>"+
+"<button onclick=react("+m.id+",'😂')>😂</button>"+
+"<button onclick=edit("+m.id+")>✏️</button>"+
+"<button onclick=del("+m.id+")>🗑</button>"+
 "</div>";
 
 messages.appendChild(d);
@@ -334,16 +328,15 @@ document.body.style.background==="#1e1f22"?"white":"#1e1f22";
 }
 
 function toggleNotif(){
-alert("toggle notif");
+alert("notif");
 }
 
 function setPfp(){
 localStorage.setItem("pfp",pfp.value);
 }
 
-function mute(){muted=!muted;}
-function deafen(){deafened=!deafened;}
-
+function mute(){}
+function deafen(){}
 function leaveVC(){}
 
 </script>
@@ -353,16 +346,16 @@ function leaveVC(){}
 `);
 });
 
-/* ================= SOCKET ================= */
-
+/* SOCKET */
 io.on("connection",socket=>{
 
 socket.on("login",u=>{
 socket.user=u;
 users.set(socket.id,u);
+socket.emit("chatList",chats);
 });
 
-/* CHAT LIST */
+/* CHAT */
 socket.on("createChat",n=>{
 if(!chats.includes(n)) chats.push(n);
 io.emit("chatList",chats);
@@ -371,40 +364,28 @@ io.emit("chatList",chats);
 /* VC */
 socket.on("createVC",n=>{
 if(!vcs.includes(n)) vcs.push(n);
-io.emit("vcList",vcs);
 });
 
-/* SEND */
-socket.on("send",d=>{
+/* MSG */
+socket.on("msg",d=>{
 
 const m={
 id:msgId++,
 from:socket.user,
 to:d.to,
-text:d.text,
-react:""
+text:d.text
 };
 
 io.emit("msg",m);
 });
 
-/* EDIT */
-socket.on("edit",d=>{
-io.emit("edit",d);
-});
-
-/* DELETE */
-socket.on("delete",id=>{
-io.emit("delete",id);
-});
-
-/* REACT */
-socket.on("react",d=>{
-io.emit("react",d);
-});
+/* EDIT / DELETE / REACT */
+socket.on("edit",d=>io.emit("edit",d));
+socket.on("delete",id=>io.emit("delete",id));
+socket.on("react",d=>io.emit("react",d));
 
 });
 
 server.listen(3000,()=>{
-console.log("TXTEL FIXED RUNNING");
+console.log("TXTEL STABLE RUNNING");
 });
