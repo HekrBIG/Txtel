@@ -9,13 +9,12 @@ const io=new Server(server,{cors:{origin:"*"}});
 /* ================= STATE ================= */
 
 let chats=["general"];
-let vcs=["General VC"];
-
 let messages={};
-let unread={};
 
-let vcUsers={}; 
-// { room: Set(usernames) }
+let dms={}; // "user1-user2": []
+
+let vcUsers={}; // room -> Set(user)
+let pfp={}; // user -> url
 
 const users=new Map();
 
@@ -26,7 +25,7 @@ res.send(`
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TXTEL</title>
 
 <style>
@@ -36,28 +35,26 @@ margin:0;
 font-family:Arial;
 display:flex;
 height:100vh;
-background:#1e1f22;
-color:white;
 overflow:hidden;
+transition:0.3s;
 }
+
+.dark{background:#1e1f22;color:white;}
+.light{background:white;color:black;}
 
 /* SIDEBAR */
 #sidebar{
-width:300px;
+width:280px;
 background:#0f1012;
-padding:12px;
-border-right:1px solid #222;
+padding:10px;
 overflow:auto;
 }
 
-.section{margin-bottom:15px;}
-.title{font-size:12px;opacity:0.6;margin-bottom:6px;}
-
 .item{
-background:#232428;
 padding:10px;
-border-radius:8px;
 margin:5px 0;
+background:#232428;
+border-radius:8px;
 cursor:pointer;
 position:relative;
 }
@@ -65,26 +62,17 @@ position:relative;
 .item:hover{background:#313338;}
 .active{background:#4aa3ff !important;}
 
-/* UNREAD BADGE */
 .badge{
 position:absolute;
 right:8px;
 top:8px;
 background:#5865f2;
-width:18px;
-height:18px;
+width:18px;height:18px;
 border-radius:50%;
+font-size:12px;
 display:flex;
 align-items:center;
 justify-content:center;
-font-size:12px;
-}
-
-/* VC USERS */
-.small{
-font-size:11px;
-opacity:0.7;
-margin-top:3px;
 }
 
 /* CHAT */
@@ -95,9 +83,10 @@ flex-direction:column;
 }
 
 #top{
-padding:12px;
+padding:10px;
 background:#111214;
-border-bottom:1px solid #222;
+display:flex;
+justify-content:space-between;
 }
 
 #messages{
@@ -138,24 +127,52 @@ color:white;
 cursor:pointer;
 }
 
+/* SETTINGS */
+#settings{
+position:fixed;
+bottom:100px;
+left:10px;
+background:#111214;
+padding:10px;
+border-radius:10px;
+display:none;
+width:220px;
+}
+
+.smallBtn{width:100%;margin:5px 0;}
+
+/* VC RING */
+.speaking{
+outline:2px solid #3ba55d;
+box-shadow:0 0 10px #3ba55d;
+}
+
+@media(max-width:700px){
+#sidebar{width:120px;font-size:12px;}
+}
+
 </style>
 </head>
 
-<body>
+<body class="dark">
 
 <div id="sidebar">
 
-<div class="section">
-<div class="title">TEXT CHANNELS</div>
+<div>TEXT</div>
 <div id="channels"></div>
 <button onclick="createChat()">+ Chat</button>
-</div>
 
-<div class="section">
-<div class="title">VOICE CHANNELS</div>
+<hr>
+
+<div>DM</div>
+<div id="dmList"></div>
+<button onclick="startDM()">+ DM</button>
+
+<hr>
+
+<div>VOICE</div>
 <div id="voice"></div>
 <button onclick="createVC()">+ VC</button>
-</div>
 
 </div>
 
@@ -163,6 +180,7 @@ cursor:pointer;
 
 <div id="top">
 <div id="room"># general</div>
+<button onclick="toggleSettings()">⚙</button>
 </div>
 
 <div id="messages"></div>
@@ -171,6 +189,15 @@ cursor:pointer;
 <input id="msg">
 <button onclick="send()">Send</button>
 </div>
+
+</div>
+
+<!-- SETTINGS -->
+<div id="settings">
+
+<button class="smallBtn" onclick="toggleTheme()">Light/Dark</button>
+<input class="smallBtn" id="pfpInput" placeholder="PFP URL">
+<button class="smallBtn" onclick="setPfp()">Set PFP</button>
 
 </div>
 
@@ -185,34 +212,37 @@ let user=localStorage.getItem("u")||("user"+Math.floor(Math.random()*9999));
 localStorage.setItem("u",user);
 
 let current="general";
+let mode="chat";
 
 let store={};
 let unread={};
+let theme="dark";
 
 /* LOGIN */
 socket.emit("login",user);
-
-/* ENTER SEND */
-msg.addEventListener("keydown",e=>{
-if(e.key==="Enter") send();
-});
 
 /* SEND */
 function send(){
 let t=msg.value.trim();
 if(!t) return;
 
-socket.emit("msg",{to:current,text:t});
+socket.emit("msg",{to:current,text:t,mode});
 msg.value="";
 }
 
-/* CREATE CHAT */
+/* CHAT */
 function createChat(){
 let n=prompt("Chat name");
 if(n) socket.emit("createChat",n);
 }
 
-/* CREATE VC */
+/* DM */
+function startDM(){
+let u=prompt("Username:");
+if(u) socket.emit("dm",u);
+}
+
+/* VC */
 function createVC(){
 let n=prompt("VC name");
 if(n) socket.emit("createVC",n);
@@ -220,45 +250,34 @@ if(n) socket.emit("createVC",n);
 
 /* CHAT LIST */
 socket.on("chatList",list=>{
-renderChats(list);
-});
-
-/* RENDER CHANNELS */
-function renderChats(list){
-
 channels.innerHTML="";
 
 list.forEach(c=>{
-
 let d=document.createElement("div");
 d.className="item";
 
-if(c===current){
-d.classList.add("active");
-unread[c]=0;
-}
+if(c===current)d.classList.add("active");
 
-d.innerText="# "+c;
-
-/* UNREAD BADGE */
-if(unread[c] && c!==current){
+if(unread[c]){
 let b=document.createElement("div");
 b.className="badge";
 b.innerText=unread[c];
 d.appendChild(b);
 }
 
+d.innerText="# "+c;
+
 d.onclick=()=>{
 current=c;
-room.innerText="# "+c;
 unread[c]=0;
-renderChats(list);
+room.innerText="# "+c;
 load();
+render(list);
 };
 
 channels.appendChild(d);
 });
-}
+});
 
 /* MESSAGES */
 socket.on("msg",m=>{
@@ -266,16 +285,14 @@ socket.on("msg",m=>{
 if(!store[m.to]) store[m.to]=[];
 store[m.to].push(m);
 
-/* unread system */
 if(m.to!==current){
 unread[m.to]=(unread[m.to]||0)+1;
 }
 
 if(m.to===current) load();
-renderChats(Object.keys(store));
 });
 
-/* LOAD CHAT */
+/* LOAD */
 function load(){
 messages.innerHTML="";
 
@@ -289,28 +306,54 @@ messages.appendChild(d);
 });
 }
 
-/* VC LIST */
-socket.on("vcList",data=>{
+/* DM LIST */
+socket.on("dmList",list=>{
+dmList.innerHTML="";
+list.forEach(u=>{
+let d=document.createElement("div");
+d.className="item";
+d.innerText="💬 "+u;
+d.onclick=()=>{
+current=u;
+room.innerText="💬 "+u;
+load();
+};
+dmList.appendChild(d);
+});
+});
 
+/* VC USERS (speaking ring) */
+socket.on("vcUpdate",data=>{
 voice.innerHTML="";
 
-data.vcs.forEach(v=>{
+Object.keys(data).forEach(room=>{
 
 let d=document.createElement("div");
 d.className="item";
 
-let users=data.users[v]||[];
+let users=data[room].join(", ");
 
-d.innerHTML=
-"🔊 "+v+
-"<div class='small'>"+users.join(", ")+"</div>";
-
-d.onclick=()=>alert("Join VC: "+v);
+d.innerHTML="🔊 "+room+"<div style='font-size:11px'>"+users+"</div>";
 
 voice.appendChild(d);
 });
 
 });
+
+/* SETTINGS */
+function toggleSettings(){
+settings.style.display=
+settings.style.display==="block"?"none":"block";
+}
+
+function toggleTheme(){
+theme=theme==="dark"?"light":"dark";
+document.body.className=theme;
+}
+
+function setPfp(){
+localStorage.setItem("pfp",pfpInput.value);
+}
 
 </script>
 
@@ -328,25 +371,15 @@ socket.user=u;
 users.set(socket.id,u);
 
 socket.emit("chatList",chats);
-socket.emit("vcList",{vcs,users:vcUsers});
 });
 
-/* CHAT CREATE */
+/* CHAT */
 socket.on("createChat",n=>{
 if(!chats.includes(n)) chats.push(n);
 io.emit("chatList",chats);
 });
 
-/* VC CREATE */
-socket.on("createVC",n=>{
-if(!vcs.includes(n)) vcs.push(n);
-
-vcUsers[n]=vcUsers[n]||new Set();
-
-io.emit("vcList",{vcs,users:vcUsersToObj()});
-});
-
-/* MESSAGE */
+/* MSG */
 socket.on("msg",d=>{
 
 const m={
@@ -358,7 +391,25 @@ text:d.text
 io.emit("msg",m);
 });
 
-/* VC JOIN (no message spam, ONLY tracking) */
+/* DM */
+socket.on("dm",u=>{
+socket.emit("dmList",[u]);
+});
+
+/* VC */
+socket.on("createVC",n=>{
+vcUsers[n]=vcUsers[n]||new Set();
+io.emit("vcUpdate",vcUsersToObj());
+});
+
+function vcUsersToObj(){
+let o={};
+for(let k in vcUsers){
+o[k]=Array.from(vcUsers[k]);
+}
+return o;
+}
+
 socket.on("joinVC",room=>{
 
 for(let r in vcUsers){
@@ -369,25 +420,11 @@ if(!vcUsers[room]) vcUsers[room]=new Set();
 
 vcUsers[room].add(socket.user);
 
-io.emit("vcList",{vcs,users:vcUsersToObj()});
-});
-
-/* HELPERS */
-function vcUsersToObj(){
-let o={};
-for(let k in vcUsers){
-o[k]=Array.from(vcUsers[k]);
-}
-return o;
-}
-
-/* CLEAN */
-socket.on("disconnect",()=>{
-users.delete(socket.id);
+io.emit("vcUpdate",vcUsersToObj());
 });
 
 });
 
 server.listen(3000,()=>{
-console.log("TXTEL FINAL STABLE RUNNING");
+console.log("TXTEL FINAL VC + DM + UI RUNNING");
 });
