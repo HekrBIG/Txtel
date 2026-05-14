@@ -14,9 +14,8 @@ const vcUsers=new Map();
 
 /* DB */
 db.run("CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY,room TEXT,fromUser TEXT,text TEXT,time DATETIME DEFAULT CURRENT_TIMESTAMP)");
-db.run("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,username TEXT UNIQUE)");
 
-/* ================= FRONTEND ================= */
+/* FRONTEND */
 app.get("/",(req,res)=>{
 res.send(`<!DOCTYPE html>
 <html>
@@ -80,6 +79,7 @@ button{padding:8px;border:none;border-radius:6px;background:#5865f2;color:#fff}
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
+
 <script>
 
 const socket=io();
@@ -124,7 +124,7 @@ renderChats();
 if(d.room===room)render();
 });
 
-/* CHAT RENDER */
+/* CHAT */
 function render(){
 messages.innerHTML="";
 (chats[room]||[]).forEach(x=>{
@@ -213,7 +213,7 @@ vcPanel.appendChild(div);
 });
 });
 
-/* SPEAK DETECT */
+/* SPEAK */
 function startSpeak(){
 const ctx=new AudioContext();
 const src=ctx.createMediaStreamSource(stream);
@@ -252,7 +252,19 @@ socket.emit("vcDeaf",deaf);
 deafBtn.style.background=deaf?"red":"#5865f2";
 }
 
-/* INIT */
+/* KEYBIND NAME CHANGE (;) */
+document.addEventListener("keydown",(e)=>{
+if(e.key===";"){
+let newName=prompt("new username");
+if(!newName)return;
+
+localStorage.setItem("u",newName);
+user=newName;
+
+socket.emit("changeName",newName);
+}
+});
+
 renderChats();
 renderVC();
 
@@ -260,7 +272,7 @@ renderVC();
 </body></html>`);
 });
 
-/* ================= SOCKET ================= */
+/* SOCKET */
 io.on("connection",socket=>{
 
 socket.on("login",u=>{
@@ -269,11 +281,19 @@ users.set(socket.id,u);
 io.emit("users",Array.from(users.values()));
 });
 
+/* NAME CHANGE FIX */
+socket.on("changeName",name=>{
+socket.user=name;
+users.set(socket.id,name);
+io.emit("users",Array.from(users.values()));
+});
+
+/* CHAT */
 socket.on("msg",d=>{
 io.emit("msg",{from:socket.user,room:d.room,text:d.text});
 });
 
-/* VC JOIN */
+/* VC */
 socket.on("joinVoice",()=>{
 vcUsers.set(socket.id,{
 name:socket.user,
@@ -284,7 +304,6 @@ speaking:false
 io.emit("vcUpdate",Array.from(vcUsers.values()));
 });
 
-/* VC STATES */
 socket.on("vcMute",v=>{
 if(vcUsers.has(socket.id)){
 vcUsers.get(socket.id).mute=v;
