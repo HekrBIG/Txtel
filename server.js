@@ -4,7 +4,6 @@ const {Server}=require("socket.io");
 
 const app=express();
 const server=http.createServer(app);
-
 const io=new Server(server,{cors:{origin:"*"}});
 
 /* ================= STATE ================= */
@@ -16,7 +15,7 @@ const profiles=new Map();
 let globalVCs=["General VC"];
 let globalChats=["general"];
 
-/* ================= FRONTEND ================= */
+/* ================= APP ================= */
 
 app.get("/",(req,res)=>{
 
@@ -28,49 +27,132 @@ res.send(`<!DOCTYPE html>
 
 <style>
 
-body{margin:0;font-family:Arial;background:#1e1f22;color:white;display:flex;height:100vh;overflow:hidden;}
+body{
+margin:0;
+font-family:Arial;
+background:#1e1f22;
+color:white;
+display:flex;
+height:100vh;
+overflow:hidden;
+}
 
-#sidebar{width:300px;background:#0f1012;padding:12px;overflow:auto;border-right:1px solid #222;}
+/* SIDEBAR */
+
+#sidebar{
+width:300px;
+background:#0f1012;
+padding:12px;
+overflow:auto;
+border-right:1px solid #222;
+box-sizing:border-box;
+}
 
 .section{margin-bottom:15px;}
+.title{font-size:12px;opacity:0.7;margin-bottom:8px;}
 
-.title{font-size:13px;opacity:0.7;margin-bottom:8px;}
-
-.item{background:#232428;padding:10px;border-radius:10px;margin:5px 0;cursor:pointer;}
+.item{
+background:#232428;
+padding:10px;
+border-radius:10px;
+margin:5px 0;
+cursor:pointer;
+}
 
 .item:hover{background:#313338;}
-
 .active{background:#4aa3ff!important;}
 
-.badge{background:red;padding:2px 6px;border-radius:10px;font-size:10px;float:right;}
+/* CHAT */
 
-#chat{flex:1;display:flex;flex-direction:column;}
+#chat{
+flex:1;
+display:flex;
+flex-direction:column;
+}
 
-#top{padding:14px;background:#111214;font-size:18px;}
+#top{
+padding:14px;
+background:#111214;
+font-size:18px;
+border-bottom:1px solid #222;
+}
 
-#messages{flex:1;overflow:auto;padding:10px;}
+#messages{
+flex:1;
+padding:10px;
+overflow:auto;
+}
 
-.msg{background:#2b2d31;padding:8px;margin:5px 0;border-radius:8px;}
+.msg{
+background:#2b2d31;
+padding:8px;
+margin:5px 0;
+border-radius:8px;
+}
 
-#bar{display:flex;gap:6px;padding:10px;background:#111214;}
+#bar{
+display:flex;
+gap:6px;
+padding:10px;
+background:#111214;
+}
 
-input{flex:1;padding:10px;border:none;border-radius:8px;background:#2b2d31;color:white;}
+input{
+flex:1;
+padding:10px;
+border:none;
+border-radius:8px;
+background:#2b2d31;
+color:white;
+}
 
-button{padding:10px;border:none;border-radius:8px;background:#5865f2;color:white;cursor:pointer;}
+button{
+padding:10px;
+border:none;
+border-radius:8px;
+background:#5865f2;
+color:white;
+cursor:pointer;
+}
+
+/* VC USER */
 
 .vcUser{
 background:#232428;
 padding:8px;
-border-radius:10px;
-margin:6px 0;
+border-radius:8px;
+margin:5px 0;
 display:flex;
 justify-content:space-between;
-align-items:center;
 }
 
-.pfp{width:35px;height:35px;border-radius:50%;}
+/* ================= BOTTOM PANEL ================= */
 
-.small{font-size:10px;opacity:0.7;}
+#userPanel{
+position:fixed;
+bottom:0;
+left:0;
+width:300px;
+background:#111214;
+border-top:1px solid #222;
+padding:10px;
+box-sizing:border-box;
+}
+
+#vcStatus{
+font-size:12px;
+opacity:0.8;
+margin-bottom:6px;
+}
+
+#controls{
+display:flex;
+gap:6px;
+}
+
+#controls button{
+flex:1;
+}
 
 audio{display:none;}
 
@@ -82,27 +164,16 @@ audio{display:none;}
 <div id="sidebar">
 
 <div class="section">
-<div class="title">TEXT CHANNELS</div>
+<div class="title">TEXT</div>
 <div id="channels"></div>
 <button onclick="addChat()">+ Chat</button>
 </div>
 
 <div class="section">
-<div class="title">VOICE CHANNELS</div>
+<div class="title">VOICE</div>
 <div id="voiceChannels"></div>
 <div id="vcPanel"></div>
 <button onclick="addVC()">+ VC</button>
-</div>
-
-<div class="section">
-<div class="title">PROFILE</div>
-
-<img id="myPfp" style="width:50px;height:50px;border-radius:50%;margin-bottom:6px;">
-
-<input id="pfpInput" placeholder="PFP URL">
-<input id="descInput" placeholder="Status">
-
-<button onclick="saveProfile()">Save</button>
 </div>
 
 <div class="section">
@@ -120,8 +191,23 @@ audio{display:none;}
 <div id="bar">
 <input id="msgInput">
 <button onclick="send()">Send</button>
+</div>
+
+</div>
+
+<!-- BOTTOM LEFT PANEL -->
+
+<div id="userPanel">
+
+<div id="vcStatus">
+<div id="vcNameSmall">Not connected</div>
+<div id="vcTimeSmall">00:00</div>
+</div>
+
+<div id="controls">
 <button id="muteBtn" onclick="muteMic()">🎤</button>
 <button id="deafBtn" onclick="deafen()">🎧</button>
+<button onclick="leaveVC()" style="background:red;">Leave</button>
 </div>
 
 </div>
@@ -135,10 +221,12 @@ const socket=io();
 /* ================= LOGIN ================= */
 
 let username=localStorage.getItem("txtelUser");
+
 if(!username){
 username=prompt("Username")||("user"+Math.floor(Math.random()*9999));
 localStorage.setItem("txtelUser",username);
 }
+
 socket.emit("login",username);
 
 /* ================= STATE ================= */
@@ -147,8 +235,6 @@ let currentRoom="general";
 let currentVC=null;
 
 let chats={};
-let unread={};
-
 let textChannels=[];
 let vcList=[];
 
@@ -158,10 +244,39 @@ let peers={};
 let muted=false;
 let deafened=false;
 
-/* ================= SEND ================= */
+/* ================= VC TIMER ================= */
+
+let vcStart=null;
+let vcInterval=null;
+
+function startTimer(){
+
+vcStart=Date.now();
+
+if(vcInterval) clearInterval(vcInterval);
+
+vcInterval=setInterval(()=>{
+
+let s=Math.floor((Date.now()-vcStart)/1000);
+let m=Math.floor(s/60);
+let sec=s%60;
+
+vcTimeSmall.innerText=
+String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0");
+
+},1000);
+}
+
+function stopTimer(){
+if(vcInterval) clearInterval(vcInterval);
+vcTimeSmall.innerText="00:00";
+}
+
+/* ================= CHAT ================= */
 
 function send(){
-const t=msgInput.value.trim();
+
+let t=msgInput.value.trim();
 if(!t) return;
 
 socket.emit("message",{room:currentRoom,text:t});
@@ -172,8 +287,6 @@ msgInput.addEventListener("keydown",e=>{
 if(e.key==="Enter") send();
 });
 
-/* ================= CHAT ================= */
-
 socket.on("chatList",list=>{
 textChannels=list;
 renderChats();
@@ -182,10 +295,9 @@ renderChats();
 function renderChats(){
 channels.innerHTML="";
 textChannels.forEach(c=>{
-const d=document.createElement("div");
+let d=document.createElement("div");
 d.className="item";
 if(c===currentRoom)d.classList.add("active");
-
 d.innerText="# "+c;
 
 d.onclick=()=>{
@@ -199,34 +311,6 @@ channels.appendChild(d);
 });
 }
 
-/* ================= VC ================= */
-
-socket.on("vcList",list=>{
-vcList=list;
-renderVC();
-});
-
-function renderVC(){
-voiceChannels.innerHTML="";
-vcList.forEach(v=>{
-const d=document.createElement("div");
-d.className="item";
-if(v===currentVC)d.classList.add("active");
-
-d.innerText="🔊 "+v;
-
-d.onclick=()=>joinVC(v);
-
-voiceChannels.appendChild(d);
-});
-}
-
-function addVC(){
-const n=prompt("VC name");
-if(!n) return;
-socket.emit("createVC",n);
-}
-
 /* ================= MESSAGES ================= */
 
 socket.on("message",m=>{
@@ -238,45 +322,46 @@ if(m.room===currentRoom) renderMessages();
 function renderMessages(){
 messages.innerHTML="";
 (chats[currentRoom]||[]).forEach(m=>{
-const d=document.createElement("div");
+let d=document.createElement("div");
 d.className="msg";
 d.innerHTML="<b>"+m.from+":</b> "+m.text;
 messages.appendChild(d);
 });
 }
 
-/* ================= USERS ================= */
+/* ================= VC ================= */
 
-socket.on("users",list=>{
-users.innerHTML="";
-list.forEach(u=>{
-const d=document.createElement("div");
+socket.on("vcList",list=>{
+vcList=list;
+renderVC();
+});
+
+function renderVC(){
+voiceChannels.innerHTML="";
+vcList.forEach(v=>{
+let d=document.createElement("div");
 d.className="item";
-d.innerText=u;
-users.appendChild(d);
-});
-});
-
-/* ================= PROFILE ================= */
-
-function saveProfile(){
-socket.emit("updateProfile",{
-pfp:pfpInput.value,
-desc:descInput.value
+if(v===currentVC)d.classList.add("active");
+d.innerText="🔊 "+v;
+d.onclick=()=>joinVC(v);
+voiceChannels.appendChild(d);
 });
 }
 
-socket.on("profiles",data=>{
-const p=data.find(x=>x[0]===socket.id);
-if(!p) return;
-myPfp.src=p[1].pfp;
-});
+function addVC(){
+let n=prompt("VC name");
+if(!n) return;
+socket.emit("createVC",n);
+}
 
-/* ================= VC JOIN ================= */
+/* ================= JOIN VC ================= */
 
 async function joinVC(room){
+
 currentVC=room;
-renderVC();
+
+vcNameSmall.innerText="🔊 "+room;
+startTimer();
 
 if(!localStream){
 localStream=await navigator.mediaDevices.getUserMedia({audio:true});
@@ -284,6 +369,21 @@ startSpeak();
 }
 
 socket.emit("joinVC",room);
+}
+
+/* ================= LEAVE VC ================= */
+
+function leaveVC(){
+
+currentVC=null;
+
+vcNameSmall.innerText="Not connected";
+stopTimer();
+
+Object.values(peers).forEach(p=>p.close());
+peers={};
+
+socket.emit("leaveVC");
 }
 
 /* ================= WEBRTC ================= */
@@ -312,8 +412,8 @@ pc.ontrack=e=>{
 let a=document.getElementById("a-"+id);
 if(!a){
 a=document.createElement("audio");
-a.id="a-"+id;
 a.autoplay=true;
+a.id="a-"+id;
 document.body.appendChild(a);
 }
 a.srcObject=e.streams[0];
@@ -352,7 +452,7 @@ socket.on("iceCandidate",d=>{
 peers[d.from]?.addIceCandidate(d.candidate);
 });
 
-/* ================= MUTE ================= */
+/* ================= MUTE / DEAF ================= */
 
 function muteMic(){
 
@@ -365,9 +465,6 @@ t.enabled=!muted;
 });
 
 muteBtn.style.background=muted?"red":"#5865f2";
-muteBtn.innerText=muted?"🔇":"🎤";
-
-socket.emit("vcState",{type:"mute",state:muted});
 }
 
 function deafen(){
@@ -379,14 +476,12 @@ a.muted=deafened;
 });
 
 deafBtn.style.background=deafened?"red":"#5865f2";
-deafBtn.innerText=deafened?"🔇":"🎧";
-
-socket.emit("vcState",{type:"deafen",state:deafened});
 }
 
-/* ================= SPEAK ================= */
+/* ================= SPEAK DETECT ================= */
 
 function startSpeak(){
+
 const ctx=new AudioContext();
 const src=ctx.createMediaStreamSource(localStream);
 const a=new AnalyserNode(ctx);
@@ -396,9 +491,12 @@ const data=new Uint8Array(a.fftSize);
 
 function loop(){
 a.getByteTimeDomainData(data);
+
 let s=0;
-for(let i=0;i<data.length;i++) s+=Math.abs(data[i]-128);
-socket.emit("speaking",s>900);
+for(let i=0;i<data.length;i++){
+s+=Math.abs(data[i]-128);
+}
+
 requestAnimationFrame(loop);
 }
 loop();
@@ -417,14 +515,6 @@ io.on("connection",socket=>{
 socket.on("login",name=>{
 socket.username=name;
 users.set(socket.id,name);
-
-if(!profiles.has(socket.id)){
-profiles.set(socket.id,{
-name,
-pfp:"https://i.imgur.com/1X4Q9.png",
-desc:"No status"
-});
-}
 
 socket.emit("vcList",globalVCs);
 socket.emit("chatList",globalChats);
@@ -445,21 +535,7 @@ if(!globalVCs.includes(n)) globalVCs.push(n);
 io.emit("vcList",globalVCs);
 });
 
-/* PROFILE */
-
-socket.on("updateProfile",data=>{
-const p=profiles.get(socket.id);
-if(!p) return;
-
-p.pfp=data.pfp||p.pfp;
-p.desc=data.desc||p.desc;
-
-profiles.set(socket.id,p);
-
-io.emit("profiles",Array.from(profiles.entries()));
-});
-
-/* VC JOIN */
+/* JOIN VC */
 
 socket.on("joinVC",room=>{
 socket.join(room);
@@ -468,14 +544,19 @@ vcUsers.set(socket.id,{
 name:socket.username,
 room,
 muted:false,
-deafened:false,
-speaking:false
+deafened:false
 });
 
 const list=[...(io.sockets.adapter.rooms.get(room)||[])].filter(x=>x!==socket.id);
 
 socket.emit("allUsers",list);
 socket.to(room).emit("userJoined",socket.id);
+});
+
+/* LEAVE VC */
+
+socket.on("leaveVC",()=>{
+vcUsers.delete(socket.id);
 });
 
 /* SIGNAL */
@@ -490,18 +571,6 @@ io.to(d.to).emit("answer",{from:socket.id,answer:d.answer});
 
 socket.on("iceCandidate",d=>{
 io.to(d.to).emit("iceCandidate",{from:socket.id,candidate:d.candidate});
-});
-
-/* VC STATE */
-
-socket.on("vcState",d=>{
-const u=vcUsers.get(socket.id);
-if(!u) return;
-
-if(d.type==="mute") u.muted=d.state;
-if(d.type==="deafen") u.deafened=d.state;
-
-vcUsers.set(socket.id,u);
 });
 
 /* DISCONNECT */
