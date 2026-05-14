@@ -6,31 +6,37 @@ const app=express();
 const server=http.createServer(app);
 const io=new Server(server,{cors:{origin:"*"}});
 
-/* STATE */
+/* ================= STATE ================= */
+
+let chats=["general"];
+let vcs=["General VC"];
+
+let messages={};      // channel messages
+let dmMessages={};    // private messages
+
+let msgId=0;
+
 const users=new Map();
-const vcUsers=new Map();
 
-let globalVCs=["General VC"];
-let globalChats=["general"];
+/* ================= FRONTEND ================= */
 
-/* APP */
 app.get("/",(req,res)=>{
 res.send(`<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
-<title>TXTEL</title>
+<title>TXTEL FULL</title>
 
 <style>
 
 body{
 margin:0;
 font-family:Arial;
-background:#1e1f22;
-color:white;
 display:flex;
 height:100vh;
 overflow:hidden;
+background:#1e1f22;
+color:white;
 }
 
 /* SIDEBAR */
@@ -40,7 +46,6 @@ background:#0f1012;
 padding:12px;
 overflow:auto;
 border-right:1px solid #222;
-box-sizing:border-box;
 }
 
 .section{margin-bottom:15px;}
@@ -49,16 +54,13 @@ box-sizing:border-box;
 .item{
 background:#232428;
 padding:10px;
-border-radius:10px;
+border-radius:8px;
 margin:5px 0;
 cursor:pointer;
 }
 
 .item:hover{background:#313338;}
-
-.active{
-background:#4aa3ff!important;
-}
+.active{background:#4aa3ff!important;}
 
 /* CHAT */
 #chat{
@@ -68,8 +70,11 @@ flex-direction:column;
 }
 
 #top{
-padding:14px;
+padding:12px;
 background:#111214;
+display:flex;
+justify-content:space-between;
+align-items:center;
 border-bottom:1px solid #222;
 }
 
@@ -84,6 +89,12 @@ background:#2b2d31;
 padding:8px;
 margin:5px 0;
 border-radius:8px;
+position:relative;
+}
+
+.actions button{
+margin-left:5px;
+font-size:11px;
 }
 
 #bar{
@@ -111,15 +122,26 @@ color:white;
 cursor:pointer;
 }
 
-/* VC USER */
-.vcUser{
-background:#232428;
-padding:8px;
-border-radius:8px;
-margin:5px 0;
+/* SETTINGS */
+#settings{
+position:fixed;
+bottom:120px;
+left:10px;
+width:260px;
+background:#111214;
+border:1px solid #222;
+border-radius:10px;
+padding:10px;
+display:none;
 }
 
-/* BOTTOM PANEL */
+.smallBtn{
+width:100%;
+margin:5px 0;
+background:#2b2d31;
+}
+
+/* USER PANEL */
 #userPanel{
 position:fixed;
 bottom:0;
@@ -128,13 +150,6 @@ width:300px;
 background:#111214;
 border-top:1px solid #222;
 padding:10px;
-box-sizing:border-box;
-}
-
-#vcStatus{
-font-size:12px;
-opacity:0.8;
-margin-bottom:6px;
 }
 
 #controls{
@@ -158,44 +173,56 @@ audio{display:none;}
 <div class="section">
 <div class="title">TEXT</div>
 <div id="channels"></div>
+<button onclick="createChat()">+ Chat</button>
 </div>
 
 <div class="section">
 <div class="title">VOICE</div>
 <div id="voiceChannels"></div>
-<button onclick="addVC()">+ VC</button>
+<button onclick="createVC()">+ VC</button>
 </div>
 
 <div class="section">
-<div class="title">USERS</div>
-<div id="users"></div>
+<div class="title">DM</div>
+<button onclick="openDM()">+ DM</button>
 </div>
 
 </div>
 
 <div id="chat">
 
-<div id="top"># general</div>
+<div id="top">
+<div id="room"># general</div>
+<button onclick="toggleSettings()">⚙</button>
+</div>
+
 <div id="messages"></div>
 
 <div id="bar">
-<input id="msgInput">
+<input id="msg">
 <button onclick="send()">Send</button>
 </div>
 
 </div>
 
-<!-- BOTTOM PANEL -->
-<div id="userPanel">
+<!-- SETTINGS -->
+<div id="settings">
 
-<div id="vcStatus">
-<div id="vcNameSmall">Not connected</div>
-<div id="vcTimeSmall">00:00</div>
+<button class="smallBtn" onclick="toggleTheme()">🌗 Theme</button>
+<button class="smallBtn" onclick="toggleNotif()">🔔 Notifications</button>
+<input class="smallBtn" id="pfp" placeholder="PFP URL">
+<button class="smallBtn" onclick="setPfp()">Set PFP</button>
+
+<button class="smallBtn" onclick="toggleSettings()">Close</button>
+
 </div>
 
+<!-- USER PANEL -->
+<div id="userPanel">
+
 <div id="controls">
-<button id="muteBtn" onclick="muteMic()">🎤</button>
-<button id="deafBtn" onclick="deafen()">🎧</button>
+<button onclick="mute()">🎤</button>
+<button onclick="deafen()">🎧</button>
 <button onclick="leaveVC()" style="background:red;">Leave</button>
 </div>
 
@@ -208,191 +235,138 @@ audio{display:none;}
 const socket=io();
 
 /* STATE */
-let username=localStorage.getItem("u")||("user"+Math.floor(Math.random()*9999));
-localStorage.setItem("u",username);
+let user=localStorage.getItem("u")||("user"+Math.floor(Math.random()*9999));
+localStorage.setItem("u",user);
 
-socket.emit("login",username);
-
-let currentRoom="general";
-let currentVC=null;
-
-let chats={};
-let textChannels=["general"];
-let vcList=["General VC"];
-
-let localStream=null;
-let peers={};
+let current="#general";
+let mode="chat";
 
 let muted=false;
 let deafened=false;
 
-/* TIMER */
-let vcStart=null;
-let vcInterval=null;
+let theme="dark";
+let notif=true;
 
-function startTimer(){
-vcStart=Date.now();
-if(vcInterval) clearInterval(vcInterval);
+let store={};
 
-vcInterval=setInterval(()=>{
-let s=Math.floor((Date.now()-vcStart)/1000);
-let m=Math.floor(s/60);
-let sec=s%60;
+/* LOGIN */
+socket.emit("login",user);
 
-vcTimeSmall.innerText=
-String(m).padStart(2,"0")+":"+
-String(sec).padStart(2,"0");
-
-},1000);
-}
-
-function stopTimer(){
-clearInterval(vcInterval);
-vcTimeSmall.innerText="00:00";
-}
-
-/* CHAT SEND */
+/* SEND */
 function send(){
-let t=msgInput.value.trim();
+let t=msg.value.trim();
 if(!t) return;
 
-socket.emit("message",{room:currentRoom,text:t});
-msgInput.value="";
+socket.emit("send",{to:current,text:t,mode});
+msg.value="";
 }
 
-msgInput.addEventListener("keydown",e=>{
-if(e.key==="Enter") send();
-});
-
-/* CHANNEL RENDER */
-socket.on("chatList",list=>{
-textChannels=list;
-renderChats();
-});
-
-function renderChats(){
-channels.innerHTML="";
-
-textChannels.forEach(c=>{
-let d=document.createElement("div");
-d.className="item";
-
-if(c===currentRoom) d.classList.add("active");
-
-d.innerText="# "+c;
-
-d.onclick=()=>{
-currentRoom=c;
-top.innerText="# "+c;
-renderChats();
-renderMessages();
-};
-
-channels.appendChild(d);
-});
+/* CHAT CREATE */
+function createChat(){
+let n=prompt("Chat name");
+if(n) socket.emit("createChat",n);
 }
 
-/* MESSAGES */
-socket.on("message",m=>{
-
-if(!chats[m.room]) chats[m.room]=[];
-chats[m.room].push(m);
-
-if(m.room===currentRoom){
-renderMessages();
+/* VC CREATE */
+function createVC(){
+let n=prompt("VC name");
+if(n) socket.emit("createVC",n);
 }
 
+/* DM */
+function openDM(){
+let u=prompt("Username:");
+if(u){
+mode="dm";
+current=u;
+room.innerText="💬 "+u;
+load();
+}
+}
+
+/* RECEIVE MSG */
+socket.on("msg",m=>{
+
+let key=m.to;
+
+if(!store[key]) store[key]=[];
+
+store[key].push(m);
+
+if(m.to===current){
+render();
+}
 });
 
-function renderMessages(){
+/* RENDER */
+function render(){
 messages.innerHTML="";
-(chats[currentRoom]||[]).forEach(m=>{
+
+let list=store[current]||[];
+
+list.forEach(m=>{
 let d=document.createElement("div");
 d.className="msg";
-d.innerHTML="<b>"+m.from+":</b> "+m.text;
+
+d.innerHTML=`
+<b>${m.from}</b>: ${m.text}
+<br>
+
+<div class="actions">
+<button onclick="react(${m.id},'👍')">👍</button>
+<button onclick="react(${m.id},'😂')">😂</button>
+<button onclick="edit(${m.id})">✏️</button>
+<button onclick="del(${m.id})">🗑</button>
+</div>
+
+<span id="r-${m.id}">${m.react||""}</span>
+`;
+
 messages.appendChild(d);
 });
 }
 
+/* EDIT */
+function edit(id){
+let t=prompt("Edit:");
+if(t) socket.emit("edit",{id,text:t});
+}
+
+/* DELETE */
+function del(id){
+socket.emit("delete",id);
+}
+
+/* REACT */
+function react(id,r){
+socket.emit("react",{id,r});
+}
+
+/* SETTINGS */
+function toggleSettings(){
+settings.style.display=
+settings.style.display==="block"?"none":"block";
+}
+
+function toggleTheme(){
+document.body.style.background=
+document.body.style.background==="#1e1f22"?"white":"#1e1f22";
+}
+
+function toggleNotif(){
+notif=!notif;
+alert(notif);
+}
+
+function setPfp(){
+localStorage.setItem("pfp",pfp.value);
+}
+
 /* VC */
-socket.on("vcList",list=>{
-vcList=list;
-});
+function leaveVC(){}
 
-function addVC(){
-let n=prompt("VC name");
-if(!n) return;
-socket.emit("createVC",n);
-}
-
-/* JOIN VC */
-async function joinVC(room){
-
-currentVC=room;
-
-vcNameSmall.innerText="🔊 "+room;
-startTimer();
-
-if(!localStream){
-localStream=await navigator.mediaDevices.getUserMedia({audio:true});
-}
-
-socket.emit("joinVC",room);
-}
-
-/* LEAVE VC */
-function leaveVC(){
-
-currentVC=null;
-
-vcNameSmall.innerText="Not connected";
-stopTimer();
-
-Object.values(peers).forEach(p=>p.close());
-peers={};
-
-socket.emit("leaveVC");
-}
-
-/* MUTE / DEAF */
-function muteMic(){
-if(!localStream) return;
-
-muted=!muted;
-localStream.getAudioTracks().forEach(t=>t.enabled=!muted);
-
-muteBtn.style.background=muted?"red":"#5865f2";
-}
-
-function deafen(){
-deafened=!deafened;
-
-document.querySelectorAll("audio").forEach(a=>{
-a.muted=deafened;
-});
-
-deafBtn.style.background=deafened?"red":"#5865f2";
-}
-
-/* RENDER VC */
-function renderVC(){
-voiceChannels.innerHTML="";
-
-vcList.forEach(v=>{
-let d=document.createElement("div");
-d.className="item";
-d.innerText="🔊 "+v;
-
-d.onclick=()=>joinVC(v);
-
-voiceChannels.appendChild(d);
-});
-}
-
-/* INIT */
-socket.on("connect",()=>{
-socket.emit("joinInit");
-});
+function mute(){muted=!muted;}
+function deafen(){deafened=!deafened;}
 
 </script>
 
@@ -400,52 +374,61 @@ socket.emit("joinInit");
 </html>`);
 });
 
-/* SOCKET */
+/* ================= SOCKET ================= */
+
 io.on("connection",socket=>{
 
-socket.on("login",name=>{
-socket.username=name;
-users.set(socket.id,name);
-
-socket.emit("chatList",globalChats);
-io.emit("users",Array.from(users.values()));
+socket.on("login",u=>{
+socket.user=u;
+users.set(socket.id,u);
 });
 
 /* CHAT */
-socket.on("message",m=>{
-io.emit("message",{
-from:socket.username,
-room:m.room,
-text:m.text
-});
+socket.on("createChat",n=>{
+if(!chats.includes(n)) chats.push(n);
+io.emit("chatList",chats);
 });
 
-/* VC */
 socket.on("createVC",n=>{
-if(!globalVCs.includes(n)) globalVCs.push(n);
-io.emit("vcList",globalVCs);
+if(!vcs.includes(n)) vcs.push(n);
+io.emit("vcList",vcs);
 });
 
-socket.on("joinVC",room=>{
-socket.join(room);
+/* SEND MSG */
+socket.on("send",d=>{
+const m={
+id:msgId++,
+from:socket.user,
+to:d.to,
+text:d.text,
+react:""
+};
 
-vcUsers.set(socket.id,{room});
-
-socket.to(room).emit("userJoined",socket.id);
+io.emit("msg",m);
 });
 
-socket.on("leaveVC",()=>{
-vcUsers.delete(socket.id);
+/* EDIT */
+socket.on("edit",d=>{
+io.emit("edit",d);
 });
 
-/* CLEANUP */
+/* DELETE */
+socket.on("delete",id=>{
+io.emit("delete",id);
+});
+
+/* REACT */
+socket.on("react",d=>{
+io.emit("react",d);
+});
+
+/* CLEAN */
 socket.on("disconnect",()=>{
 users.delete(socket.id);
-vcUsers.delete(socket.id);
-io.emit("users",Array.from(users.values()));
 });
+
 });
 
 server.listen(3000,()=>{
-console.log("TXTEL RUNNING");
+console.log("TXTEL FULL SYSTEM RUNNING");
 });
