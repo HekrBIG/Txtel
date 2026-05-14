@@ -8,14 +8,14 @@ const io=new Server(server,{cors:{origin:"*"}});
 
 /* ================= STATE ================= */
 
-const users=new Map(); // socket.id -> username
-
-const onlineUsers=new Set(); // usernames
+const users=new Map();
 
 const chats=["general"];
-const messages={};
 
-const vcRooms=new Map(); // room -> Set(socket.id)
+/* 🔊 ALWAYS EXISTING VC */
+let vcRooms={
+"General VC": new Set()
+};
 
 /* ================= FRONTEND ================= */
 
@@ -48,8 +48,8 @@ overflow:auto;
 
 .item{
 padding:10px;
-background:#232428;
 margin:5px 0;
+background:#232428;
 border-radius:8px;
 cursor:pointer;
 position:relative;
@@ -57,20 +57,6 @@ position:relative;
 
 .item:hover{background:#313338;}
 .active{background:#4aa3ff !important;}
-
-.badge{
-position:absolute;
-right:8px;
-top:8px;
-background:#5865f2;
-width:18px;
-height:18px;
-border-radius:50%;
-font-size:12px;
-display:flex;
-align-items:center;
-justify-content:center;
-}
 
 /* CHAT */
 #chat{
@@ -122,6 +108,11 @@ color:white;
 cursor:pointer;
 }
 
+.small{
+font-size:11px;
+opacity:0.7;
+}
+
 </style>
 </head>
 
@@ -129,20 +120,16 @@ cursor:pointer;
 
 <div id="sidebar">
 
-<div>CHAT</div>
-<div id="channels"></div>
-
-<div style="margin-top:10px">DM (ONLINE)</div>
-<div id="dm"></div>
-
-<div style="margin-top:10px">VOICE</div>
+<div>VOICE CHANNELS</div>
 <div id="voice"></div>
+
+<button onclick="createVC()">+ Create VC</button>
 
 </div>
 
 <div id="chat">
 
-<div id="top" id="room"># general</div>
+<div id="top">🔊 General VC</div>
 
 <div id="messages"></div>
 
@@ -162,71 +149,33 @@ const socket=io();
 let user=localStorage.getItem("u")||("user"+Math.floor(Math.random()*9999));
 localStorage.setItem("u",user);
 
-let current="general";
-let mode="chat";
-
-let store={};
+let currentVC="General VC";
 
 /* LOGIN */
 socket.emit("login",user);
 
-/* SEND */
+/* SEND (not chat spam, just VC test if needed) */
 function send(){
-let t=msg.value.trim();
-if(!t) return;
-
-socket.emit("msg",{to:current,text:t});
 msg.value="";
 }
 
-/* CHAT SELECT */
-function selectChat(c){
-current=c;
-room.innerText="# "+c;
-load();
+/* CREATE VC */
+function createVC(){
+let n=prompt("VC name");
+if(!n) return;
+socket.emit("createVC",n);
 }
 
-/* RENDER CHAT LIST */
-socket.on("chatList",list=>{
-channels.innerHTML="";
+/* JOIN VC */
+function joinVC(room){
+currentVC=room;
+socket.emit("joinVC",room);
+renderVC([]);
+}
 
-list.forEach(c=>{
-let d=document.createElement("div");
-d.className="item";
-
-if(c===current)d.classList.add("active");
-
-d.innerText="# "+c;
-
-d.onclick=()=>selectChat(c);
-
-channels.appendChild(d);
-});
-});
-
-/* DM USERS (REAL ONLINE USERS) */
-socket.on("onlineUsers",list=>{
-dm.innerHTML="";
-
-list.forEach(u=>{
-if(u===user) return;
-
-let d=document.createElement("div");
-d.className="item";
-d.innerText="💬 "+u;
-
-d.onclick=()=>{
-current="dm:"+u;
-room.innerText="💬 "+u;
-load();
-};
-
-dm.appendChild(d);
-});
-});
-
-/* VC LIST (REAL ROOMS) */
+/* RENDER VC */
 socket.on("vcUpdate",data=>{
+
 voice.innerHTML="";
 
 Object.keys(data).forEach(room=>{
@@ -234,38 +183,41 @@ Object.keys(data).forEach(room=>{
 let d=document.createElement("div");
 d.className="item";
 
-let users=data[room];
+if(room===currentVC)d.classList.add("active");
 
-d.innerHTML="🔊 "+room+"<div style='font-size:11px'>"+users.join(", ")+"</div>";
+d.innerHTML="🔊 "+room+
+"<div class='small'>"+data[room].join(", ")+"</div>";
 
-d.onclick=()=>{
-socket.emit("joinVC",room);
-};
+d.onclick=()=>joinVC(room);
 
 voice.appendChild(d);
-});
-});
 
-/* MESSAGES */
-socket.on("msg",m=>{
-
-if(!store[m.to]) store[m.to]=[];
-store[m.to].push(m);
-
-if(m.to===current) load();
 });
 
-/* LOAD */
-function load(){
-messages.innerHTML="";
+});
 
-let list=store[current]||[];
+/* INIT */
+socket.on("vcUpdate",data=>{
+renderVC(data);
+});
 
-list.forEach(m=>{
+function renderVC(data){
+voice.innerHTML="";
+
+Object.keys(data).forEach(room=>{
+
 let d=document.createElement("div");
-d.className="msg";
-d.innerHTML="<b>"+m.from+"</b>: "+m.text;
-messages.appendChild(d);
+d.className="item";
+
+if(room===currentVC)d.classList.add("active");
+
+d.innerHTML="🔊 "+room+
+"<div class='small'>"+data[room].join(", ")+"</div>";
+
+d.onclick=()=>joinVC(room);
+
+voice.appendChild(d);
+
 });
 }
 
@@ -282,79 +234,69 @@ io.on("connection",socket=>{
 
 socket.on("login",u=>{
 socket.user=u;
-
 users.set(socket.id,u);
-onlineUsers.add(u);
 
-/* send updates */
-io.emit("onlineUsers",Array.from(onlineUsers));
-io.emit("chatList",chats);
+/* ALWAYS SEND VC */
+sendVC();
 });
 
-/* CHAT */
-socket.on("msg",d=>{
-
-let m={
-from:socket.user,
-to:d.to,
-text:d.text
-};
-
-io.emit("msg",m);
-});
-
-/* VC JOIN (REAL ROOM SYSTEM) */
-socket.on("joinVC",room=>{
-
-/* leave all rooms first */
-for(let [r,set] of vcRooms){
-set.delete(socket.id);
+/* CREATE VC */
+socket.on("createVC",name=>{
+if(!vcRooms[name]){
+vcRooms[name]=new Set();
 }
 
-/* join new */
-if(!vcRooms.has(room)) vcRooms.set(room,new Set());
-
-vcRooms.get(room).add(socket.id);
-
-sendVCUpdate();
+sendVC();
 });
 
-function sendVCUpdate(){
+/* JOIN VC */
+socket.on("joinVC",room=>{
+
+/* leave all */
+for(let r in vcRooms){
+vcRooms[r].delete(socket.id);
+}
+
+/* join */
+if(!vcRooms[room]){
+vcRooms[room]=new Set();
+}
+
+vcRooms[room].add(socket.id);
+
+sendVC();
+});
+
+/* VC UPDATE */
+function sendVC(){
 
 let out={};
 
-for(let [room,set] of vcRooms){
-
-out[room]=Array.from(set).map(id=>users.get(id)).filter(Boolean);
-
+for(let r in vcRooms){
+out[r]=Array.from(vcRooms[r]).map(id=>users.get(id)).filter(Boolean);
 }
+
+/* ensure General VC ALWAYS EXISTS */
+if(!out["General VC"]) out["General VC"]=[];
 
 io.emit("vcUpdate",out);
 }
 
-/* CHAT CREATE */
-socket.on("createChat",n=>{
-if(!chats.includes(n)) chats.push(n);
-io.emit("chatList",chats);
-});
-
 /* DISCONNECT */
 socket.on("disconnect",()=>{
 
-onlineUsers.delete(socket.user);
 users.delete(socket.id);
 
-for(let [r,set] of vcRooms){
-set.delete(socket.id);
+for(let r in vcRooms){
+vcRooms[r].delete(socket.id);
 }
 
-io.emit("onlineUsers",Array.from(onlineUsers));
-sendVCUpdate();
+sendVC();
 
 });
 
 });
 
 server.listen(3000,()=>{
-console.log("TXTEL FIXED DM + VC REAL RUNNING");
+console.log("VC FIXED: GENERAL + CREATOR READY");
 });
