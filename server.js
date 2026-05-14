@@ -9,8 +9,15 @@ const io=new Server(server,{
 cors:{origin:"*"}
 });
 
+/* ================= STATE ================= */
+
 const users=new Map();
+
 const vcUsers=new Map();
+
+let globalVCs=["General VC"];
+
+let globalChats=["general"];
 
 /* ================= FRONTEND ================= */
 
@@ -34,12 +41,15 @@ height:100vh;
 overflow:hidden;
 }
 
+/* SIDEBAR */
+
 #sidebar{
-width:260px;
-background:#111214;
-padding:10px;
+width:300px;
+background:#0f1012;
+padding:12px;
 overflow:auto;
 box-sizing:border-box;
+border-right:1px solid #222;
 }
 
 .section{
@@ -49,18 +59,24 @@ margin-bottom:20px;
 .title{
 font-weight:bold;
 margin-bottom:10px;
+font-size:14px;
+opacity:0.8;
 }
 
+/* ITEMS */
+
 .item{
-background:#2b2d31;
-padding:8px;
-border-radius:8px;
-margin:5px 0;
+background:#232428;
+padding:10px;
+border-radius:10px;
+margin:6px 0;
 cursor:pointer;
+transition:0.15s;
+font-size:15px;
 }
 
 .item:hover{
-background:#3a3d44;
+background:#313338;
 }
 
 .active{
@@ -75,6 +91,8 @@ font-size:11px;
 float:right;
 }
 
+/* CHAT */
+
 #chat{
 flex:1;
 display:flex;
@@ -82,7 +100,7 @@ flex-direction:column;
 }
 
 #top{
-padding:12px;
+padding:14px;
 background:#111214;
 border-bottom:1px solid #333;
 font-size:20px;
@@ -96,15 +114,17 @@ overflow:auto;
 
 .msg{
 background:#2b2d31;
-padding:8px;
-border-radius:8px;
+padding:10px;
+border-radius:10px;
 margin:5px 0;
 word-break:break-word;
 }
 
+/* BAR */
+
 #bar{
 display:flex;
-gap:5px;
+gap:6px;
 padding:10px;
 background:#111214;
 }
@@ -113,28 +133,33 @@ input{
 flex:1;
 padding:10px;
 border:none;
-border-radius:8px;
+border-radius:10px;
 background:#2b2d31;
 color:white;
+font-size:14px;
 }
 
 button{
 border:none;
-padding:10px;
-border-radius:8px;
+padding:10px 12px;
+border-radius:10px;
 background:#5865f2;
 color:white;
 cursor:pointer;
+font-weight:bold;
 }
 
+/* VC */
+
 .vcUser{
-background:#2b2d31;
-padding:6px;
-border-radius:6px;
-margin:4px 0;
+background:#232428;
+padding:8px;
+border-radius:8px;
+margin:5px 0;
 display:flex;
 justify-content:space-between;
-font-size:13px;
+align-items:center;
+font-size:14px;
 }
 
 .small{
@@ -155,7 +180,7 @@ display:none;
 
 <div class="section">
 
-<div class="title">Chats</div>
+<div class="title">TEXT CHANNELS</div>
 
 <div id="channels"></div>
 
@@ -165,7 +190,7 @@ display:none;
 
 <div class="section">
 
-<div class="title">Voice</div>
+<div class="title">VOICE CHANNELS</div>
 
 <div id="voiceChannels"></div>
 
@@ -177,7 +202,7 @@ display:none;
 
 <div class="section">
 
-<div class="title">Users</div>
+<div class="title">USERS</div>
 
 <div id="users"></div>
 
@@ -235,23 +260,23 @@ socket.emit("login",username);
 
 let currentRoom="general";
 
+let currentVC=null;
+
 let chats={};
 
 let unread={};
 
-let textChannels=["general"];
+let textChannels=[];
 
-let voiceChannels=["General VC"];
-
-let currentVC=null;
+let voiceChannels=[];
 
 let localStream=null;
+
+let peers={};
 
 let muted=false;
 
 let deafened=false;
-
-let peers={};
 
 /* ================= NOTIFICATIONS ================= */
 
@@ -301,7 +326,7 @@ if(m.room!==currentRoom){
 
 unread[m.room]=(unread[m.room]||0)+1;
 
-renderChannels();
+renderChats();
 
 if(Notification.permission==="granted"){
 
@@ -317,7 +342,7 @@ renderMessages();
 }
 });
 
-/* ================= RENDER MSG ================= */
+/* ================= RENDER MESSAGES ================= */
 
 function renderMessages(){
 
@@ -337,9 +362,16 @@ messages.appendChild(div);
 messages.scrollTop=messages.scrollHeight;
 }
 
-/* ================= CHANNELS ================= */
+/* ================= TEXT CHANNELS ================= */
 
-function renderChannels(){
+socket.on("chatList",list=>{
+
+textChannels=list;
+
+renderChats();
+});
+
+function renderChats(){
 
 channels.innerHTML="";
 
@@ -370,7 +402,7 @@ unread[c]=0;
 
 renderMessages();
 
-renderChannels();
+renderChats();
 };
 
 channels.appendChild(div);
@@ -383,11 +415,7 @@ const name=prompt("Chat name");
 
 if(!name) return;
 
-if(textChannels.includes(name)) return;
-
-textChannels.push(name);
-
-renderChannels();
+socket.emit("createChat",name);
 }
 
 /* ================= USERS ================= */
@@ -414,7 +442,7 @@ top.innerText="@ "+u;
 
 renderMessages();
 
-renderChannels();
+renderChats();
 };
 
 users.appendChild(div);
@@ -422,6 +450,13 @@ users.appendChild(div);
 });
 
 /* ================= VC ================= */
+
+socket.on("vcList",list=>{
+
+voiceChannels=list;
+
+renderVC();
+});
 
 function renderVC(){
 
@@ -452,11 +487,7 @@ const name=prompt("VC name");
 
 if(!name) return;
 
-if(voiceChannels.includes(name)) return;
-
-voiceChannels.push(name);
-
-renderVC();
+socket.emit("createVC",name);
 }
 
 /* ================= JOIN VC ================= */
@@ -480,7 +511,7 @@ startSpeakingDetect();
 }
 catch(err){
 
-alert("Mic permission denied");
+alert("Mic denied");
 
 return;
 }
@@ -716,7 +747,7 @@ deafened?"red":"#5865f2";
 socket.emit("deafen",deafened);
 }
 
-/* ================= NAME CHANGE ================= */
+/* ================= CHANGE NAME ================= */
 
 document.addEventListener("keydown",e=>{
 
@@ -737,12 +768,6 @@ socket.emit("changeName",newName);
 }
 });
 
-/* ================= INIT ================= */
-
-renderChannels();
-
-renderVC();
-
 </script>
 
 </body>
@@ -753,16 +778,22 @@ renderVC();
 
 io.on("connection",socket=>{
 
+/* LOGIN */
+
 socket.on("login",name=>{
 
 socket.username=name;
 
 users.set(socket.id,name);
 
+socket.emit("vcList",globalVCs);
+
+socket.emit("chatList",globalChats);
+
 io.emit("users",Array.from(users.values()));
 });
 
-/* ================= CHANGE NAME ================= */
+/* CHANGE NAME */
 
 socket.on("changeName",name=>{
 
@@ -773,7 +804,7 @@ users.set(socket.id,name);
 io.emit("users",Array.from(users.values()));
 });
 
-/* ================= CHAT ================= */
+/* CHAT */
 
 socket.on("message",m=>{
 
@@ -784,7 +815,31 @@ text:m.text
 });
 });
 
-/* ================= JOIN VC ================= */
+/* CREATE CHAT */
+
+socket.on("createChat",name=>{
+
+if(!globalChats.includes(name)){
+
+globalChats.push(name);
+}
+
+io.emit("chatList",globalChats);
+});
+
+/* CREATE VC */
+
+socket.on("createVC",name=>{
+
+if(!globalVCs.includes(name)){
+
+globalVCs.push(name);
+}
+
+io.emit("vcList",globalVCs);
+});
+
+/* JOIN VC */
 
 socket.on("joinVC",room=>{
 
@@ -798,8 +853,9 @@ deafened:false,
 speaking:false
 });
 
-const others=[...io.sockets.adapter.rooms.get(room)||[]]
-.filter(id=>id!==socket.id);
+const others=[
+...(io.sockets.adapter.rooms.get(room)||[])
+].filter(id=>id!==socket.id);
 
 socket.emit("allUsers",others);
 
@@ -810,7 +866,7 @@ Array.from(vcUsers.values())
 );
 });
 
-/* ================= WEBRTC ================= */
+/* WEBRTC */
 
 socket.on("offer",data=>{
 
@@ -836,7 +892,7 @@ candidate:data.candidate
 });
 });
 
-/* ================= VC STATES ================= */
+/* VC STATES */
 
 socket.on("mute",state=>{
 
@@ -871,7 +927,7 @@ Array.from(vcUsers.values())
 );
 });
 
-/* ================= DISCONNECT ================= */
+/* DISCONNECT */
 
 socket.on("disconnect",()=>{
 
