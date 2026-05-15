@@ -1,22 +1,18 @@
-socket.on("watchScreen",async data=>{
+socket.on("watchScreen",data=>{
 
-if(!peers[data.from])return
+if(!data.from)return
 
 const pc=peers[data.from]
 
-const transceiver=
-pc.getTransceivers()
-.find(t=>
-t.receiver &&
-t.receiver.track &&
-t.receiver.track.kind==="video"
-)
+if(!pc)return
 
-if(!transceiver)return
+pc.ontrack=e=>{
 
-const stream=new MediaStream([
-transceiver.receiver.track
-])
+const videoTrack=e.track
+
+if(videoTrack.kind!=="video")return
+
+const stream=new MediaStream([videoTrack])
 
 let video=document.getElementById(
 "remoteScreen-"+data.from
@@ -30,16 +26,16 @@ video.id="remoteScreen-"+data.from
 
 video.autoplay=true
 video.playsInline=true
+video.controls=false
 
 video.style.position="fixed"
 video.style.right="20px"
 video.style.top="20px"
 video.style.width="420px"
 video.style.borderRadius="14px"
-video.style.border=
-"2px solid #4aa3ff"
-video.style.zIndex="9999"
+video.style.border="2px solid #4aa3ff"
 video.style.background="#000"
+video.style.zIndex="9999"
 
 document.body.appendChild(video)
 
@@ -47,11 +43,17 @@ document.body.appendChild(video)
 
 video.srcObject=stream
 
+video.play().catch(()=>{})
+
+}
+
 })
 
 async function startScreen(){
 
 if(!currentVC)return
+
+try{
 
 shareBtn.classList.add("active")
 
@@ -67,16 +69,13 @@ audio:true
 const track=
 screen.getVideoTracks()[0]
 
-let preview=
-document.getElementById(
+let preview=document.getElementById(
 "screenPreview"
 )
 
 if(!preview){
 
-preview=document.createElement(
-"video"
-)
+preview=document.createElement("video")
 
 preview.id="screenPreview"
 
@@ -99,9 +98,13 @@ document.body.appendChild(preview)
 
 preview.srcObject=screen
 
+preview.play().catch(()=>{})
+
 Object.keys(peers).forEach(id=>{
 
 const pc=peers[id]
+
+if(!pc)return
 
 let sender=
 pc.getSenders()
@@ -121,7 +124,8 @@ pc.addTrack(track,screen)
 }
 
 socket.emit("watchScreen",{
-to:id
+to:id,
+from:socket.id
 })
 
 })
@@ -131,6 +135,8 @@ track.onended=()=>{
 shareBtn.classList.remove("active")
 
 Object.values(peers).forEach(pc=>{
+
+if(!pc)return
 
 const sender=
 pc.getSenders()
@@ -142,14 +148,14 @@ s.track.kind==="video"
 if(sender){
 
 try{
-pc.removeTrack(sender)
+sender.replaceTrack(null)
 }catch{}
 
 }
 
 })
 
-let preview=
+const preview=
 document.getElementById(
 "screenPreview"
 )
@@ -159,21 +165,19 @@ preview.remove()
 }
 
 document
-.querySelectorAll("[id^='remoteScreen-']")
+.querySelectorAll(
+"[id^='remoteScreen-']"
+)
 .forEach(v=>v.remove())
 
 }
 
-}
+}catch(err){
 
-socket.on("watchScreen",data=>{
+alert("Screenshare failed")
 
-if(data.to===socket.id){
-
-socket.emit("watchScreen",{
-from:data.from
-})
+shareBtn.classList.remove("active")
 
 }
 
-})
+}
