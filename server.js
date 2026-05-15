@@ -384,69 +384,6 @@ const leaveSound=new Audio(
 let username=
 localStorage.getItem("txtelUser")
 
-/* ADD THIS UNDER USERNAME */
-
-document.addEventListener("keydown",e=>{
-
-if(e.key===";"){
-
-let newName=prompt(
-"New username",
-username
-)
-
-if(!newName) return
-
-username=newName
-
-localStorage.setItem(
-"txtelUser",
-username
-)
-
-usernameBox.innerText=username
-
-socket.emit(
-"changeName",
-username
-)
-
-}
-
-})
-
-/* ================= SERVER SIDE ================= */
-
-/* ADD INSIDE io.on("connection") */
-
-socket.on("changeName",name=>{
-
-socket.username=name
-
-users.set(socket.id,name)
-
-if(vcStates.has(socket.id)){
-
-let u=vcStates.get(socket.id)
-
-u.name=name
-
-vcStates.set(socket.id,u)
-
-}
-
-io.emit(
-"users",
-Array.from(users.values())
-)
-
-io.emit(
-"vcUsers",
-Array.from(vcStates.values())
-)
-
-})
-
 if(!username){
 
 username=prompt("Username")
