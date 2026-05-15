@@ -1,27 +1,27 @@
-const express=require("express");
-const http=require("http");
-const {Server}=require("socket.io");
-const multer=require("multer");
-const path=require("path");
-const fs=require("fs");
+const express=require("express")
+const http=require("http")
+const {Server}=require("socket.io")
+const multer=require("multer")
+const path=require("path")
+const fs=require("fs")
 
-const app=express();
-const server=http.createServer(app);
+const app=express()
+const server=http.createServer(app)
 
 const io=new Server(server,{
 cors:{origin:"*"}
-});
+})
 
 if(!fs.existsSync("uploads")){
-fs.mkdirSync("uploads");
+fs.mkdirSync("uploads")
 }
 
-app.use("/uploads",express.static("uploads"));
+app.use("/uploads",express.static("uploads"))
 
 const storage=multer.diskStorage({
 
 destination:(req,file,cb)=>{
-cb(null,"uploads/");
+cb(null,"uploads/")
 },
 
 filename:(req,file,cb)=>{
@@ -29,26 +29,26 @@ cb(
 null,
 Date.now()+
 path.extname(file.originalname)
-);
+)
 }
 
-});
+})
 
-const upload=multer({storage});
+const upload=multer({storage})
 
 app.post("/upload",upload.single("file"),(req,res)=>{
 
 res.json({
 url:"/uploads/"+req.file.filename
-});
+})
 
-});
+})
 
-const users=new Map();
-const vcStates=new Map();
+const users=new Map()
+const vcStates=new Map()
 
-let globalChats=["general"];
-let globalVCs=["General VC"];
+let globalChats=["general"]
+let globalVCs=["General VC"]
 
 app.get("/",(req,res)=>{
 
@@ -72,11 +72,12 @@ overflow:hidden;
 
 #sidebar{
 width:280px;
-background:#0f1012;
+background:#111214;
 padding:10px;
 box-sizing:border-box;
 overflow:auto;
 border-right:1px solid #222;
+padding-bottom:120px;
 }
 
 .section{
@@ -127,14 +128,14 @@ padding:10px;
 
 .msg{
 background:#2b2d31;
-padding:8px;
-border-radius:8px;
+padding:10px;
+border-radius:10px;
 margin:5px 0;
 word-break:break-word;
 }
 
 .msg img{
-max-width:300px;
+max-width:350px;
 border-radius:10px;
 margin-top:6px;
 }
@@ -195,6 +196,21 @@ box-sizing:border-box;
 border-top:1px solid #222;
 }
 
+#userCard{
+margin-bottom:10px;
+}
+
+#usernameBox{
+font-weight:bold;
+font-size:16px;
+margin-bottom:4px;
+}
+
+#vcNameSmall{
+opacity:.7;
+font-size:13px;
+}
+
 #controls{
 display:flex;
 gap:6px;
@@ -202,10 +218,25 @@ gap:6px;
 
 #controls button{
 flex:1;
+height:42px;
+font-size:18px;
+background:#2b2d31;
 }
 
-audio{
-display:none;
+#muteBtn.active{
+background:#ed4245;
+}
+
+#deafBtn.active{
+background:#ed4245;
+}
+
+#shareBtn.active{
+background:#4aa3ff;
+}
+
+#leaveBtn{
+background:#ed4245!important;
 }
 
 .volumeWrap{
@@ -222,7 +253,7 @@ align-items:flex-end;
 width:100%;
 height:0%;
 background:#4aa3ff;
-transition:height .08s linear;
+transition:.08s linear;
 }
 
 </style>
@@ -302,8 +333,14 @@ Send
 
 <div id="userPanel">
 
+<div id="userCard">
+
+<div id="usernameBox"></div>
+
 <div id="vcNameSmall">
 Not connected
+</div>
+
 </div>
 
 <div id="controls">
@@ -316,8 +353,12 @@ Not connected
 🎧
 </button>
 
-<button onclick="leaveVC()" style="background:red;">
-Leave
+<button id="shareBtn" onclick="startScreen()">
+🖥
+</button>
+
+<button id="leaveBtn" onclick="leaveVC()">
+📞
 </button>
 
 </div>
@@ -328,288 +369,364 @@ Leave
 
 <script>
 
-const socket=io();
+const socket=io()
+
+Notification.requestPermission()
+
+const joinSound=new Audio(
+"https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3?filename=notification-2-269292.mp3"
+)
+
+const leaveSound=new Audio(
+"https://cdn.pixabay.com/download/audio/2022/03/10/audio_c8631ef2b1.mp3?filename=interface-124464.mp3"
+)
 
 let username=
-localStorage.getItem("txtelUser");
+localStorage.getItem("txtelUser")
 
 if(!username){
 
-username=prompt("Username");
+username=prompt("Username")
 
 if(!username){
-username=
-"user"+
-Math.floor(Math.random()*9999);
+username="user"+Math.floor(Math.random()*9999)
 }
 
 localStorage.setItem(
 "txtelUser",
 username
-);
+)
 
 }
 
-socket.emit("login",username);
+usernameBox.innerText=username
 
-let currentRoom="general";
-let currentVC=null;
+socket.emit("login",username)
 
-let chats={};
+let currentRoom="general"
+let currentVC=null
 
-let textChannels=[];
-let vcChannels=[];
+let chats={}
 
-let peers={};
+let saved=
+localStorage.getItem("txtelChats")
 
-let localStream=null;
+if(saved){
+chats=JSON.parse(saved)
+}
 
-let muted=false;
-let deafened=false;
+let unread={}
 
-/* CHAT */
+let textChannels=[]
+let vcChannels=[]
+
+let peers={}
+
+let localStream=null
+
+let muted=false
+let deafened=false
+
+let vcStart=0
+let vcInterval=null
 
 socket.on("chatList",list=>{
 
-textChannels=list;
+textChannels=list
 
-renderChats();
+renderChats()
 
-});
+})
 
 function renderChats(){
 
-channels.innerHTML="";
+channels.innerHTML=""
 
 textChannels.forEach(c=>{
 
-let d=document.createElement("div");
+let d=document.createElement("div")
 
-d.className="item";
+d.className="item"
 
 if(c===currentRoom){
-d.classList.add("active");
+d.classList.add("active")
 }
 
-d.innerText=
-c.startsWith("DM_")
+let badge=unread[c]
+? \`<span style="
+background:red;
+padding:2px 8px;
+border-radius:999px;
+font-size:12px;
+">\${unread[c]}</span>\`
+: ""
+
+d.innerHTML=\`
+<div style="
+display:flex;
+justify-content:space-between;
+align-items:center;
+">
+
+<span>
+
+\${c.startsWith("DM_")
 ? "@ "+c.replace("DM_","")
-: "# "+c;
+: "# "+c}
+
+</span>
+
+\${badge}
+
+</div>
+\`
 
 d.onclick=()=>{
 
-currentRoom=c;
+currentRoom=c
+
+unread[c]=0
 
 top.innerText=
 c.startsWith("DM_")
 ? "@ "+c.replace("DM_","")
-: "# "+c;
+: "# "+c
 
-renderChats();
-renderMessages();
+renderChats()
+renderMessages()
 
-};
+}
 
-channels.appendChild(d);
+channels.appendChild(d)
 
-});
+})
 
 }
 
 function addChat(){
 
-let n=prompt("Chat name");
+let n=prompt("Chat name")
 
-if(!n) return;
+if(!n) return
 
-socket.emit("createChat",n);
+socket.emit("createChat",n)
 
 }
-
-/* VC */
 
 socket.on("vcList",list=>{
 
-vcChannels=list;
+vcChannels=list
 
-renderVCs();
+renderVCs()
 
-});
+})
 
 function renderVCs(){
 
-voiceChannels.innerHTML="";
+voiceChannels.innerHTML=""
 
 vcChannels.forEach(v=>{
 
-let d=document.createElement("div");
+let d=document.createElement("div")
 
-d.className="item";
+d.className="item"
 
 if(v===currentVC){
-d.classList.add("active");
+d.classList.add("active")
 }
 
-d.innerText="🔊 "+v;
+d.innerText="🔊 "+v
 
-d.onclick=()=>joinVC(v);
+d.onclick=()=>joinVC(v)
 
-voiceChannels.appendChild(d);
+voiceChannels.appendChild(d)
 
-});
+})
 
 }
 
 function addVC(){
 
-let n=prompt("VC name");
+let n=prompt("VC name")
 
-if(!n) return;
+if(!n) return
 
-socket.emit("createVC",n);
+socket.emit("createVC",n)
 
 }
-
-/* USERS */
 
 socket.on("users",list=>{
 
-users.innerHTML="";
+users.innerHTML=""
 
 list.forEach(u=>{
 
-if(u===username) return;
+if(u===username) return
 
-let d=document.createElement("div");
+let d=document.createElement("div")
 
-d.className="item";
+d.className="item"
 
-d.innerText=u;
+d.innerHTML=\`
+<div style="
+display:flex;
+justify-content:space-between;
+align-items:center;
+">
+<span>\${u}</span>
+<span>🟢</span>
+</div>
+\`
 
 d.onclick=()=>{
 
-currentRoom="DM_"+u;
+currentRoom="DM_"+u
 
-top.innerText="@ "+u;
+top.innerText="@ "+u
 
 if(!chats[currentRoom]){
-chats[currentRoom]=[];
+chats[currentRoom]=[]
 }
 
 if(!textChannels.includes(currentRoom)){
-textChannels.push(currentRoom);
+textChannels.push(currentRoom)
 }
 
-renderChats();
-renderMessages();
+renderChats()
+renderMessages()
 
-};
+}
 
-users.appendChild(d);
+users.appendChild(d)
 
-});
+})
 
-});
-
-/* SEND */
+})
 
 function send(){
 
-let text=msgInput.value.trim();
+let text=msgInput.value.trim()
 
-if(!text) return;
+if(!text) return
 
 socket.emit("message",{
 room:currentRoom,
 text,
 dm:currentRoom.startsWith("DM_")
-});
+})
 
-msgInput.value="";
+msgInput.value=""
 
 }
 
 msgInput.addEventListener("keydown",e=>{
 
 if(e.key==="Enter"){
-send();
+send()
 }
 
-});
-
-/* FILES */
+})
 
 document.addEventListener("dragover",e=>{
-e.preventDefault();
-});
+e.preventDefault()
+})
 
 document.addEventListener("drop",async e=>{
 
-e.preventDefault();
+e.preventDefault()
 
-const file=e.dataTransfer.files[0];
+const file=e.dataTransfer.files[0]
 
-uploadFile(file);
+uploadFile(file)
 
-});
+})
 
 fileInput.onchange=()=>{
 
-const file=fileInput.files[0];
+const file=fileInput.files[0]
 
-uploadFile(file);
+uploadFile(file)
 
-};
+}
 
 async function uploadFile(file){
 
-const form=new FormData();
+const form=new FormData()
 
-form.append("file",file);
+form.append("file",file)
 
 const res=await fetch("/upload",{
 method:"POST",
 body:form
-});
+})
 
-const data=await res.json();
+const data=await res.json()
 
 socket.emit("message",{
 room:currentRoom,
 file:data.url,
 text:file.name,
 dm:currentRoom.startsWith("DM_")
-});
+})
 
 }
-
-/* RECEIVE */
 
 socket.on("message",m=>{
 
-if(!chats[m.room]){
-chats[m.room]=[];
+if(
+document.hidden &&
+m.from!==username
+){
+
+new Notification(
+m.from,
+{
+body:m.text||"Sent a file"
+}
+)
+
 }
 
-chats[m.room].push(m);
+if(!chats[m.room]){
+chats[m.room]=[]
+}
+
+chats[m.room].push(m)
+
+localStorage.setItem(
+"txtelChats",
+JSON.stringify(chats)
+)
+
+if(
+m.room!==currentRoom &&
+m.from!==username
+){
+
+unread[m.room]=
+(unread[m.room]||0)+1
+
+renderChats()
+
+}
 
 if(m.room===currentRoom){
-renderMessages();
+renderMessages()
 }
 
-});
+})
 
 function renderMessages(){
 
-messages.innerHTML="";
+messages.innerHTML=""
 
 (chats[currentRoom]||[]).forEach(m=>{
 
-let d=document.createElement("div");
+let d=document.createElement("div")
 
-d.className="msg";
+d.className="msg"
 
-let html="<b>"+m.from+":</b> ";
+let html="<b>"+m.from+":</b> "
 
 if(m.file){
 
@@ -624,7 +741,7 @@ m.file.endsWith(".webp")
 html+=\`
 <br>
 <img src="\${m.file}">
-\`;
+\`
 
 }else{
 
@@ -633,47 +750,45 @@ html+=\`
 <a href="\${m.file}" target="_blank">
 📎 \${m.text}
 </a>
-\`;
+\`
 
 }
 
 }else{
 
-html+=m.text;
+html+=m.text
 
 }
 
-d.innerHTML=html;
+d.innerHTML=html
 
-messages.appendChild(d);
+messages.appendChild(d)
 
-});
+})
 
 messages.scrollTop=
-messages.scrollHeight;
+messages.scrollHeight
 
 }
-
-/* VC USERS */
 
 socket.on("vcUsers",list=>{
 
-vcUsers.innerHTML="";
+vcUsers.innerHTML=""
 
 list.forEach(u=>{
 
-if(u.room!==currentVC) return;
+if(u.room!==currentVC) return
 
-let div=document.createElement("div");
+let div=document.createElement("div")
 
-div.className="vcMember";
+div.className="vcMember"
 
 if(u.speaking){
-div.classList.add("speaking");
+div.classList.add("speaking")
 }
 
-let mic=u.muted?"🔇":"🎤";
-let deaf=u.deafened?"🎧":"";
+let mic=u.muted?"🔇":"🎤"
+let deaf=u.deafened?"🔕":"🎧"
 
 div.innerHTML=\`
 
@@ -698,85 +813,108 @@ style="height:\${u.volume||0}%">
 
 </div>
 
-\`;
+\`
 
-vcUsers.appendChild(div);
+vcUsers.appendChild(div)
 
-});
+})
 
-});
-
-/* JOIN VC */
+})
 
 async function joinVC(room){
 
-currentVC=room;
+currentVC=room
 
-renderVCs();
+renderVCs()
+
+vcStart=Date.now()
+
+clearInterval(vcInterval)
+
+vcInterval=setInterval(()=>{
+
+let sec=Math.floor(
+(Date.now()-vcStart)/1000
+)
+
+let m=Math.floor(sec/60)
+.toString()
+.padStart(2,"0")
+
+let s=(sec%60)
+.toString()
+.padStart(2,"0")
 
 vcNameSmall.innerText=
-"🔊 "+room;
+"🔊 "+room+" • "+m+":"+s
+
+},1000)
 
 if(!localStream){
 
 localStream=
-await navigator.mediaDevices.getUserMedia({
+await navigator.mediaDevices
+.getUserMedia({
 audio:true
-});
+})
 
-startSpeakingDetect();
+startSpeakingDetect()
 
 }
 
-socket.emit("leaveVC");
+socket.emit("leaveVC")
 
 setTimeout(()=>{
 
-socket.emit("joinVC",room);
+socket.emit("joinVC",room)
 
-},300);
+},300)
 
 }
-
-/* LEAVE VC */
 
 function leaveVC(){
 
-currentVC=null;
+currentVC=null
 
-renderVCs();
+renderVCs()
+
+clearInterval(vcInterval)
 
 vcNameSmall.innerText=
-"Not connected";
+"Not connected"
 
 Object.values(peers).forEach(p=>{
-p.close();
-});
+p.close()
+})
 
-peers={};
+peers={}
 
-socket.emit("leaveVC");
+socket.emit("leaveVC")
+
+leaveSound.play()
 
 }
-
-/* WEBRTC */
 
 socket.on("allUsers",list=>{
 
 list.forEach(id=>{
-createPeer(id,true);
-});
+createPeer(id,true)
+})
 
-});
+})
 
 socket.on("userJoined",id=>{
-createPeer(id,false);
-});
+
+createPeer(id,false)
+
+joinSound.play()
+
+})
 
 function createPeer(id,initiator){
 
 if(peers[id]){
-return peers[id];
+return peers[id]
 }
 
 const pc=new RTCPeerConnection({
@@ -784,21 +922,20 @@ const pc=new RTCPeerConnection({
 iceServers:[
 {
 urls:[
-"stun:stun.l.google.com:19302",
-"stun:global.stun.twilio.com:3478"
+"stun:stun.l.google.com:19302"
 ]
 }
 ]
 
-});
+})
 
-peers[id]=pc;
+peers[id]=pc
 
 if(localStream){
 
 localStream.getTracks().forEach(track=>{
-pc.addTrack(track,localStream);
-});
+pc.addTrack(track,localStream)
+})
 
 }
 
@@ -807,25 +944,25 @@ pc.ontrack=e=>{
 let media=
 document.getElementById(
 "media-"+id
-);
+)
 
 if(!media){
 
 media=document.createElement(
 "audio"
-);
+)
 
-media.autoplay=true;
+media.autoplay=true
 
-media.id="media-"+id;
+media.id="media-"+id
 
-document.body.appendChild(media);
+document.body.appendChild(media)
 
 }
 
-media.srcObject=e.streams[0];
+media.srcObject=e.streams[0]
 
-};
+}
 
 pc.onicecandidate=e=>{
 
@@ -834,11 +971,11 @@ if(e.candidate){
 socket.emit("iceCandidate",{
 to:id,
 candidate:e.candidate
-});
+})
 
 }
 
-};
+}
 
 if(initiator){
 
@@ -851,40 +988,38 @@ offerToReceiveAudio:true
 socket.emit("offer",{
 to:id,
 offer:pc.localDescription
-});
+})
 
-});
-
-}
-
-return pc;
+})
 
 }
 
-/* SIGNAL */
+return pc
+
+}
 
 socket.on("offer",async data=>{
 
 const pc=
-createPeer(data.from,false);
+createPeer(data.from,false)
 
 await pc.setRemoteDescription(
 data.offer
-);
+)
 
 const answer=
-await pc.createAnswer();
+await pc.createAnswer()
 
 await pc.setLocalDescription(
 answer
-);
+)
 
 socket.emit("answer",{
 to:data.from,
 answer
-});
+})
 
-});
+})
 
 socket.on("answer",data=>{
 
@@ -893,11 +1028,11 @@ if(peers[data.from]){
 peers[data.from]
 .setRemoteDescription(
 data.answer
-);
+)
 
 }
 
-});
+})
 
 socket.on("iceCandidate",data=>{
 
@@ -906,195 +1041,280 @@ if(peers[data.from]){
 peers[data.from]
 .addIceCandidate(
 data.candidate
-);
+)
 
 }
 
-});
-
-/* MUTE */
+})
 
 function muteMic(){
 
-if(!localStream) return;
+if(!localStream) return
 
-muted=!muted;
+muted=!muted
 
 localStream
 .getAudioTracks()
-.forEach(t=>{
-t.enabled=!muted;
-});
+.forEach(track=>{
+track.enabled=!muted
+})
 
-muteBtn.style.background=
-muted
-? "red"
-: "#5865f2";
+if(muted){
+
+muteBtn.classList.add("active")
+muteBtn.innerHTML="🔇"
+
+}else{
+
+muteBtn.classList.remove("active")
+muteBtn.innerHTML="🎤"
+
+}
 
 socket.emit("vcState",{
 type:"mute",
 state:muted
-});
+})
 
 }
 
-/* DEAFEN */
-
 function deafen(){
 
-deafened=!deafened;
+deafened=!deafened
 
 document
 .querySelectorAll("audio")
 .forEach(a=>{
-a.muted=deafened;
-});
+a.muted=deafened
+})
 
-deafBtn.style.background=
-deafened
-? "red"
-: "#5865f2";
+if(deafened){
+
+deafBtn.classList.add("active")
+deafBtn.innerHTML="🔕"
+
+}else{
+
+deafBtn.classList.remove("active")
+deafBtn.innerHTML="🎧"
+
+}
 
 socket.emit("vcState",{
 type:"deafen",
 state:deafened
-});
+})
 
 }
 
-/* SPEAK DETECT */
+async function startScreen(){
+
+if(!currentVC) return
+
+shareBtn.classList.add("active")
+
+const screen=
+await navigator.mediaDevices
+.getDisplayMedia({
+video:true,
+audio:true
+})
+
+const track=
+screen.getVideoTracks()[0]
+
+let preview=
+document.getElementById(
+"screenPreview"
+)
+
+if(!preview){
+
+preview=document.createElement(
+"video"
+)
+
+preview.id="screenPreview"
+preview.autoplay=true
+preview.playsInline=true
+
+preview.style.position="fixed"
+preview.style.right="20px"
+preview.style.bottom="20px"
+preview.style.width="300px"
+preview.style.borderRadius="14px"
+preview.style.border=
+"2px solid #4aa3ff"
+preview.style.zIndex="999"
+
+document.body.appendChild(preview)
+
+}
+
+preview.srcObject=screen
+
+Object.values(peers).forEach(pc=>{
+
+const sender=
+pc.getSenders()
+.find(s=>
+s.track &&
+s.track.kind==="video"
+)
+
+if(sender){
+
+sender.replaceTrack(track)
+
+}else{
+
+pc.addTrack(track,screen)
+
+}
+
+})
+
+track.onended=()=>{
+
+shareBtn.classList.remove("active")
+
+if(preview){
+preview.remove()
+}
+
+}
+
+}
 
 function startSpeakingDetect(){
 
-const ctx=new AudioContext();
+const ctx=new AudioContext()
 
 const src=
 ctx.createMediaStreamSource(
 localStream
-);
+)
 
 const analyser=
-ctx.createAnalyser();
+ctx.createAnalyser()
 
-analyser.fftSize=512;
+analyser.fftSize=512
 
-src.connect(analyser);
+src.connect(analyser)
 
 const data=
 new Uint8Array(
 analyser.frequencyBinCount
-);
+)
 
 function loop(){
 
 analyser.getByteFrequencyData(
 data
-);
+)
 
-let values=0;
+let values=0
 
 for(let i=0;i<data.length;i++){
-values+=data[i];
+values+=data[i]
 }
 
 let average=
-values/data.length;
+values/data.length
 
 let volume=Math.min(
 100,
 Math.floor(average/1.4)
-);
+)
 
 socket.emit("speakingData",{
 speaking:volume>12,
 volume
-});
+})
 
-requestAnimationFrame(loop);
+requestAnimationFrame(loop)
 
 }
 
-loop();
+loop()
 
 }
 
 </script>
 
 </body>
-</html>`);
+</html>`)
 
-});
-
-/* SERVER */
+})
 
 io.on("connection",socket=>{
 
 socket.on("login",name=>{
 
-socket.username=name;
+socket.username=name
 
-users.set(socket.id,name);
+users.set(socket.id,name)
 
 socket.emit(
 "chatList",
 globalChats
-);
+)
 
 socket.emit(
 "vcList",
 globalVCs
-);
+)
 
 io.emit(
 "users",
 Array.from(users.values())
-);
+)
 
-});
+})
 
 socket.on("createChat",name=>{
 
 if(!globalChats.includes(name)){
 
-globalChats.push(name);
+globalChats.push(name)
 
 io.emit(
 "chatList",
 globalChats
-);
+)
 
 }
 
-});
+})
 
 socket.on("createVC",name=>{
 
 if(!globalVCs.includes(name)){
 
-globalVCs.push(name);
+globalVCs.push(name)
 
 io.emit(
 "vcList",
 globalVCs
-);
+)
 
 }
 
-});
+})
 
 socket.on("message",m=>{
 
 if(m.dm){
 
 let target=
-m.room.replace("DM_","");
+m.room.replace("DM_","")
 
-let targetId=null;
+let targetId=null
 
 for(let [id,name] of users){
 
 if(name===target){
-targetId=id;
+targetId=id
 }
 
 }
@@ -1109,7 +1329,7 @@ room:"DM_"+socket.username,
 text:m.text||"",
 file:m.file||null
 }
-);
+)
 
 }
 
@@ -1118,9 +1338,9 @@ from:socket.username,
 room:m.room,
 text:m.text||"",
 file:m.file||null
-});
+})
 
-return;
+return
 
 }
 
@@ -1129,17 +1349,17 @@ from:socket.username,
 room:m.room,
 text:m.text||"",
 file:m.file||null
-});
+})
 
-});
+})
 
 socket.on("joinVC",room=>{
 
 for(let r of socket.rooms){
-socket.leave(r);
+socket.leave(r)
 }
 
-socket.join(room);
+socket.join(room)
 
 vcStates.set(socket.id,{
 name:socket.username,
@@ -1148,80 +1368,80 @@ muted:false,
 deafened:false,
 speaking:false,
 volume:0
-});
+})
 
 const usersInRoom=
 [...(io.sockets.adapter.rooms.get(room)||[])]
-.filter(id=>id!==socket.id);
+.filter(id=>id!==socket.id)
 
 socket.emit(
 "allUsers",
 usersInRoom
-);
+)
 
 socket.to(room)
-.emit("userJoined",socket.id);
+.emit("userJoined",socket.id)
 
 io.emit(
 "vcUsers",
 Array.from(vcStates.values())
-);
+)
 
-});
+})
 
 socket.on("vcState",data=>{
 
 if(!vcStates.has(socket.id))
-return;
+return
 
-let u=vcStates.get(socket.id);
+let u=vcStates.get(socket.id)
 
 if(data.type==="mute"){
-u.muted=data.state;
+u.muted=data.state
 }
 
 if(data.type==="deafen"){
-u.deafened=data.state;
+u.deafened=data.state
 }
 
-vcStates.set(socket.id,u);
+vcStates.set(socket.id,u)
 
 io.emit(
 "vcUsers",
 Array.from(vcStates.values())
-);
+)
 
-});
+})
 
 socket.on("speakingData",data=>{
 
 if(!vcStates.has(socket.id))
-return;
+return
 
-let u=vcStates.get(socket.id);
+let u=vcStates.get(socket.id)
 
-u.speaking=data.speaking;
-u.volume=data.volume;
+u.speaking=data.speaking
+u.volume=data.volume
 
-vcStates.set(socket.id,u);
+vcStates.set(socket.id,u)
 
 io.emit(
 "vcUsers",
 Array.from(vcStates.values())
-);
+)
 
-});
+})
 
 socket.on("leaveVC",()=>{
 
-vcStates.delete(socket.id);
+vcStates.delete(socket.id)
 
 io.emit(
 "vcUsers",
 Array.from(vcStates.values())
-);
+)
 
-});
+})
 
 socket.on("offer",data=>{
 
@@ -1231,9 +1451,9 @@ io.to(data.to).emit(
 from:socket.id,
 offer:data.offer
 }
-);
+)
 
-});
+})
 
 socket.on("answer",data=>{
 
@@ -1243,9 +1463,9 @@ io.to(data.to).emit(
 from:socket.id,
 answer:data.answer
 }
-);
+)
 
-});
+})
 
 socket.on("iceCandidate",data=>{
 
@@ -1255,33 +1475,33 @@ io.to(data.to).emit(
 from:socket.id,
 candidate:data.candidate
 }
-);
+)
 
-});
+})
 
 socket.on("disconnect",()=>{
 
-users.delete(socket.id);
+users.delete(socket.id)
 
-vcStates.delete(socket.id);
+vcStates.delete(socket.id)
 
 io.emit(
 "users",
 Array.from(users.values())
-);
+)
 
 io.emit(
 "vcUsers",
 Array.from(vcStates.values())
-);
+)
 
-});
+})
 
-});
+})
 
 server.listen(
 process.env.PORT||3000,
 ()=>{
-console.log("TXTEL RUNNING");
+console.log("TXTEL RUNNING")
 }
-);
+)
